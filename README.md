@@ -55,28 +55,54 @@ MCP Server，讓 AI 完全操控你的 macOS 電腦 — 滑鼠、鍵盤、終端
 
 ### 一鍵安裝
 ```bash
-git clone <your-repo-url> macos-control-mcp
-cd macos-control-mcp
-bash install.sh
+curl -fsSL https://raw.githubusercontent.com/vito1317/macos-control-mcp/main/install.sh | bash
 ```
 
 ### 手動安裝
 ```bash
-npm install
-npm run build:swift  # 編譯 Swift 原生助手
-npm run build        # 編譯 TypeScript
+# Clone
+git clone https://github.com/vito1317/macos-control-mcp.git ~/.local/share/macos-control-mcp
+cd ~/.local/share/macos-control-mcp
+
+# Build
+npm install && npm run setup
+
+# 註冊 MCP
+claude mcp add macos-control -- node ~/.local/share/macos-control-mcp/dist/index.js
 ```
 
-## 設定
+## 使用方式
 
-### Claude Desktop / Claude Code
-在 MCP 設定檔加入：
+```bash
+# 註冊 MCP
+claude mcp add macos-control -- node ~/.local/share/macos-control-mcp/dist/index.js
+
+# 移除 MCP
+claude mcp remove macos-control
+
+# 更新
+cd ~/.local/share/macos-control-mcp && git pull && npm run setup
+
+# 完整移除
+claude mcp remove macos-control && rm -rf ~/.local/share/macos-control-mcp
+```
+
+## 權限設定
+
+安裝後需要在系統設定中授予權限：
+- **System Settings > Privacy & Security > Accessibility** — 加入你的終端機應用
+- **System Settings > Privacy & Security > Screen Recording** — 加入你的終端機應用
+
+## 設定（進階）
+
+### 手動 JSON 設定
+也可直接編輯 MCP 設定檔：
 ```json
 {
   "mcpServers": {
     "macos-control": {
       "command": "node",
-      "args": ["/path/to/macos-control-mcp/dist/index.js"]
+      "args": ["~/.local/share/macos-control-mcp/dist/index.js"]
     }
   }
 }
