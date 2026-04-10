@@ -1,0 +1,35 @@
+{
+  "name": "macos-control-mcp",
+  "version": "1.0.0",
+  "description": "MCP Server for full macOS computer control - mouse, keyboard, terminal, screenshots, window management, and accessibility element detection with AI-optimized information reporting",
+  "author": "vito1317 <service@vito1317.com>",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "macos-control-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x dist/index.js",
+    "build:swift": "bash swift-helpers/build.sh",
+    "setup": "npm run build:swift && npm run build",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "sharp": "^0.33.5",
+    "ws": "^8.20.0",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.2",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

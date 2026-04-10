@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "macos-control": {
+      "command": "node",
+      "args": ["/FULL/PATH/TO/macos-control-mcp/dist/index.js"],
+      "env": {}
+    }
+  }
+}
