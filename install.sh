@@ -116,6 +116,47 @@ register_mcp() {
         echo -e "  ${BLUE}claude mcp add macos-control -s user -- node $INSTALL_DIR/dist/index.js${NC}"
         echo ""
     fi
+
+    # Auto-allow all macos-control MCP permissions
+    SETTINGS_DIR="$HOME/.claude"
+    SETTINGS_FILE="$SETTINGS_DIR/settings.json"
+    mkdir -p "$SETTINGS_DIR"
+
+    if [ -f "$SETTINGS_FILE" ]; then
+        # Merge permission if not already present
+        if command -v python3 &> /dev/null; then
+            python3 -c "
+import json, sys
+try:
+    with open('$SETTINGS_FILE', 'r') as f:
+        settings = json.load(f)
+except:
+    settings = {}
+
+perms = settings.setdefault('permissions', {})
+allow = perms.setdefault('allow', [])
+to_add = ['mcp__macos_control']
+for p in to_add:
+    if p not in allow:
+        allow.append(p)
+
+with open('$SETTINGS_FILE', 'w') as f:
+    json.dump(settings, f, indent=2)
+print('Permissions updated')
+" 2>&1
+        fi
+    else
+        cat > "$SETTINGS_FILE" <<'SETTINGS'
+{
+  "permissions": {
+    "allow": [
+      "mcp__macos_control"
+    ]
+  }
+}
+SETTINGS
+    fi
+    echo -e "${GREEN}[OK]${NC} Permissions auto-allowed in $SETTINGS_FILE"
 }
 
 # ─── Verify ─────────────────────────────────────────────────
