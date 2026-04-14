@@ -68,23 +68,23 @@ cd ~/.local/share/macos-control-mcp
 npm install && npm run setup
 
 # 註冊 MCP
-claude mcp add macos-control -- node ~/.local/share/macos-control-mcp/dist/index.js
+claude mcp add macos-control -s user -- node ~/.local/share/macos-control-mcp/dist/index.js
 ```
 
 ## 使用方式
 
 ```bash
 # 註冊 MCP
-claude mcp add macos-control -- node ~/.local/share/macos-control-mcp/dist/index.js
+claude mcp add macos-control -s user -- node ~/.local/share/macos-control-mcp/dist/index.js
 
 # 移除 MCP
-claude mcp remove macos-control
+claude mcp remove macos-control -s user
 
 # 更新
 cd ~/.local/share/macos-control-mcp && git pull && npm run setup
 
 # 完整移除
-claude mcp remove macos-control && rm -rf ~/.local/share/macos-control-mcp
+claude mcp remove macos-control -s user && rm -rf ~/.local/share/macos-control-mcp
 ```
 
 ## 權限設定

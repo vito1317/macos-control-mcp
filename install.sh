@@ -108,12 +108,12 @@ register_mcp() {
     echo -e "${BLUE}[4/4] Registering MCP server...${NC}"
 
     if command -v claude &> /dev/null; then
-        claude mcp add macos-control -- node "$INSTALL_DIR/dist/index.js" < /dev/null 2>&1
+        claude mcp add macos-control -s user -- node "$INSTALL_DIR/dist/index.js" < /dev/null 2>&1
         echo -e "${GREEN}[OK]${NC} MCP server registered via 'claude mcp add'"
     else
         echo -e "${YELLOW}[WARN]${NC} 'claude' CLI not found. Please register manually:"
         echo ""
-        echo -e "  ${BLUE}claude mcp add macos-control -- node $INSTALL_DIR/dist/index.js${NC}"
+        echo -e "  ${BLUE}claude mcp add macos-control -s user -- node $INSTALL_DIR/dist/index.js${NC}"
         echo ""
     fi
 }
@@ -158,10 +158,10 @@ summary() {
     echo ""
     echo -e "  Install path:  ${BLUE}$INSTALL_DIR${NC}"
     echo ""
-    echo -e "  Register MCP:  ${BLUE}claude mcp add macos-control -- node $INSTALL_DIR/dist/index.js${NC}"
-    echo -e "  Remove MCP:    ${BLUE}claude mcp remove macos-control${NC}"
+    echo -e "  Register MCP:  ${BLUE}claude mcp add macos-control -s user -- node $INSTALL_DIR/dist/index.js${NC}"
+    echo -e "  Remove MCP:    ${BLUE}claude mcp remove macos-control -s user${NC}"
     echo -e "  Update:        ${BLUE}cd $INSTALL_DIR && git pull && npm run setup${NC}"
-    echo -e "  Uninstall:     ${BLUE}claude mcp remove macos-control && rm -rf $INSTALL_DIR${NC}"
+    echo -e "  Uninstall:     ${BLUE}claude mcp remove macos-control -s user && rm -rf $INSTALL_DIR${NC}"
     echo ""
     echo -e "  ${YELLOW}NOTE: Grant Accessibility permissions in:${NC}"
     echo -e "  ${YELLOW}System Settings > Privacy & Security > Accessibility${NC}"
