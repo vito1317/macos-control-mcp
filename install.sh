@@ -4,7 +4,8 @@
 # Installs all dependencies, builds project, and registers
 # MCP server via `claude mcp add`.
 # ============================================================
-set -e
+# Note: not using set -e to avoid aborting on non-fatal errors
+# (e.g., claude mcp add returning non-zero when server already exists)
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
