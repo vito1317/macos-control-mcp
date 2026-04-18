@@ -14,6 +14,7 @@ const __dirname = dirname(__filename);
 let overlayProcess: ChildProcess | null = null;
 let overlayReady = false;
 let pendingCommands: string[] = [];
+let readyResolvers: (() => void)[] = [];
 
 function getOverlayBinaryPath(): string {
   // Try relative to dist/utils/
@@ -28,8 +29,18 @@ function getOverlayBinaryPath(): string {
   return resolve(process.cwd(), 'bin/overlay');
 }
 
-function ensureOverlay(): ChildProcess {
-  if (overlayProcess && !overlayProcess.killed) {
+function isOverlayAlive(): boolean {
+  return overlayProcess !== null && !overlayProcess.killed && overlayProcess.exitCode === null;
+}
+
+function spawnOverlay(): ChildProcess {
+  // Kill existing if dead
+  if (overlayProcess && !isOverlayAlive()) {
+    overlayProcess = null;
+    overlayReady = false;
+  }
+
+  if (overlayProcess && isOverlayAlive()) {
     return overlayProcess;
   }
 
@@ -38,29 +49,32 @@ function ensureOverlay(): ChildProcess {
     throw new Error(`Overlay binary not found at ${binaryPath}. Run: npm run build:swift`);
   }
 
+  overlayReady = false;
+
   overlayProcess = spawn(binaryPath, [], {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: false,
   });
 
-  overlayReady = true;
-
   overlayProcess.stdout?.on('data', (data: Buffer) => {
-    // Process acks (for debugging)
     const lines = data.toString().split('\n').filter(l => l.trim());
     for (const line of lines) {
-      try {
-        // JSON ack from overlay
-        JSON.parse(line);
-      } catch {
-        // Non-JSON output, ignore
+      if (line === 'READY') {
+        overlayReady = true;
+        // Flush pending commands
+        for (const cmd of pendingCommands) {
+          overlayProcess?.stdin?.write(cmd + '\n');
+        }
+        pendingCommands = [];
+        // Resolve any waiters
+        for (const resolve of readyResolvers) resolve();
+        readyResolvers = [];
       }
     }
   });
 
-  overlayProcess.stderr?.on('data', (data: Buffer) => {
+  overlayProcess.stderr?.on('data', () => {
     // Log errors but don't crash
-    // console.error('[overlay]', data.toString());
   });
 
   overlayProcess.on('exit', () => {
@@ -73,20 +87,19 @@ function ensureOverlay(): ChildProcess {
     overlayReady = false;
   });
 
-  // Flush pending commands
-  for (const cmd of pendingCommands) {
-    overlayProcess.stdin?.write(cmd + '\n');
-  }
-  pendingCommands = [];
-
   return overlayProcess;
 }
 
 function sendCommand(command: object): void {
   try {
-    const proc = ensureOverlay();
+    const proc = spawnOverlay();
     const json = JSON.stringify(command);
-    proc.stdin?.write(json + '\n');
+    if (overlayReady) {
+      proc.stdin?.write(json + '\n');
+    } else {
+      // Queue until READY
+      pendingCommands.push(json);
+    }
   } catch {
     // Overlay not available, silently skip animation
   }

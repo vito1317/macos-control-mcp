@@ -529,14 +529,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         overlayWindow = OverlayWindow()
         overlayWindow.orderFrontRegardless()
 
+        // Signal readiness to bridge
+        fputs("READY\n", stdout)
+        fflush(stdout)
+
         // Listen for stdin commands on background thread
         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
             self?.readCommands()
-        }
-
-        // Auto-quit after 60 seconds of no input (safety measure)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 120) {
-            NSApplication.shared.terminate(nil)
         }
     }
 
