@@ -2,7 +2,7 @@
 # ============================================================
 # macOS Control MCP - Installer
 # Installs all dependencies, builds project, and registers
-# MCP server via `claude mcp add`.
+# MCP server config to ~/.claude.json.
 # ============================================================
 # Note: not using set -e to avoid aborting on non-fatal errors
 # (e.g., claude mcp add returning non-zero when server already exists)
@@ -103,60 +103,63 @@ build_project() {
     echo -e "${GREEN}[OK]${NC} Project built successfully"
 }
 
-# ─── Register MCP via claude mcp add ────────────────────────
+# ─── Register MCP server (direct JSON write) ──────────────
 register_mcp() {
     echo ""
     echo -e "${BLUE}[4/4] Registering MCP server...${NC}"
 
-    if command -v claude &> /dev/null; then
-        claude mcp add macos-control -s user -- node "$INSTALL_DIR/dist/index.js" < /dev/null 2>&1 || true
-        echo -e "${GREEN}[OK]${NC} MCP server registered via 'claude mcp add'"
-    else
-        echo -e "${YELLOW}[WARN]${NC} 'claude' CLI not found. Please register manually:"
-        echo ""
-        echo -e "  ${BLUE}claude mcp add macos-control -s user -- node $INSTALL_DIR/dist/index.js${NC}"
-        echo ""
-    fi
+    # Write MCP server config directly to ~/.claude.json
+    # (bypasses 'claude mcp add' which breaks curl|bash pipe)
+    CLAUDE_CONFIG="$HOME/.claude.json"
+
+    python3 -c "
+import json, os
+
+config_path = os.path.expanduser('~/.claude.json')
+try:
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+except:
+    config = {}
+
+servers = config.setdefault('mcpServers', {})
+servers['macos-control'] = {
+    'command': 'node',
+    'args': ['$INSTALL_DIR/dist/index.js']
+}
+
+with open(config_path, 'w') as f:
+    json.dump(config, f, indent=2)
+print('MCP server registered in ' + config_path)
+" 2>&1
+
+    echo -e "${GREEN}[OK]${NC} MCP server registered in ~/.claude.json"
 
     # Auto-allow all macos-control MCP permissions
     SETTINGS_DIR="$HOME/.claude"
     SETTINGS_FILE="$SETTINGS_DIR/settings.json"
     mkdir -p "$SETTINGS_DIR"
 
-    if [ -f "$SETTINGS_FILE" ]; then
-        # Merge permission if not already present
-        if command -v python3 &> /dev/null; then
-            python3 -c "
-import json, sys
+    python3 -c "
+import json, os
+
+settings_path = '$SETTINGS_FILE'
 try:
-    with open('$SETTINGS_FILE', 'r') as f:
+    with open(settings_path, 'r') as f:
         settings = json.load(f)
 except:
     settings = {}
 
 perms = settings.setdefault('permissions', {})
 allow = perms.setdefault('allow', [])
-to_add = ['mcp__macos_control']
-for p in to_add:
-    if p not in allow:
-        allow.append(p)
+if 'mcp__macos_control' not in allow:
+    allow.append('mcp__macos_control')
 
-with open('$SETTINGS_FILE', 'w') as f:
+with open(settings_path, 'w') as f:
     json.dump(settings, f, indent=2)
 print('Permissions updated')
 " 2>&1
-        fi
-    else
-        cat > "$SETTINGS_FILE" <<'SETTINGS'
-{
-  "permissions": {
-    "allow": [
-      "mcp__macos_control"
-    ]
-  }
-}
-SETTINGS
-    fi
+
     echo -e "${GREEN}[OK]${NC} Permissions auto-allowed in $SETTINGS_FILE"
 }
 
