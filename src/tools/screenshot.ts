@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { addCoordinateGrid, optimizeForAI, cropRegion, annotatePoints } from '../utils/image.js';
 import { execSwift } from '../utils/swift-bridge.js';
+import sharp from 'sharp';
 
 async function captureScreen(options: {
   region?: { x: number; y: number; width: number; height: number };
@@ -38,6 +39,28 @@ async function captureScreen(options: {
 
   const buffer = await readFile(tempFile);
   await unlink(tempFile).catch(() => {}); // cleanup
+  return buffer;
+}
+
+/**
+ * Resize a physical-pixel screenshot to logical resolution.
+ * On Retina displays, screencapture outputs 2x (or 3x) the logical resolution.
+ * All coordinate APIs (Accessibility, CGEvent) use logical points, so the
+ * image must be in logical resolution for grid/annotations to align correctly.
+ */
+async function toLogicalResolution(buffer: Buffer): Promise<Buffer> {
+  const screenInfoResult = await execSwift('screen', 'info');
+  const screens = screenInfoResult?.screens as any[] | undefined;
+  const mainScreen = screens?.find((s: any) => s.isMain) || screens?.[0];
+  const scaleFactor = mainScreen?.scaleFactor || 2;
+
+  if (scaleFactor > 1) {
+    const metadata = await sharp(buffer).metadata();
+    if (metadata.width) {
+      const logicalWidth = Math.round(metadata.width / scaleFactor);
+      return sharp(buffer).resize(logicalWidth).png().toBuffer();
+    }
+  }
   return buffer;
 }
 
@@ -77,8 +100,9 @@ export const screenshotTools = {
         windowId: args.windowId,
       });
 
-      // Apply coordinate grid if requested
+      // Resize to logical resolution so grid coordinates match screen coordinate system
       if (showGrid) {
+        imageBuffer = await toLogicalResolution(imageBuffer);
         imageBuffer = await addCoordinateGrid(imageBuffer, {
           spacing: gridSpacing,
           showLabels: true,
@@ -134,6 +158,8 @@ export const screenshotTools = {
       }));
 
       let imageBuffer = await captureScreen({});
+      // Resize to logical resolution so annotation coordinates match screen coordinates
+      imageBuffer = await toLogicalResolution(imageBuffer);
       imageBuffer = await annotatePoints(imageBuffer, pointsWithColor);
 
       const optimized = await optimizeForAI(imageBuffer, { maxWidth: maxWidthVal });
