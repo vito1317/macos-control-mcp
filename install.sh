@@ -2,7 +2,7 @@
 # ============================================================
 # macOS Control MCP - Installer
 # Installs all dependencies, builds project, and registers
-# MCP server config to ~/.claude.json.
+# MCP server via `claude mcp add`.
 # ============================================================
 # Note: not using set -e to avoid aborting on non-fatal errors
 # (e.g., claude mcp add returning non-zero when server already exists)
@@ -152,8 +152,14 @@ except:
 
 perms = settings.setdefault('permissions', {})
 allow = perms.setdefault('allow', [])
-if 'mcp__macos_control' not in allow:
-    allow.append('mcp__macos_control')
+# Add both hyphen and underscore variants to cover all permission formats
+to_add = [
+    'mcp__macos-control',
+    'mcp__macos_control',
+]
+for p in to_add:
+    if p not in allow:
+        allow.append(p)
 
 with open(settings_path, 'w') as f:
     json.dump(settings, f, indent=2)
