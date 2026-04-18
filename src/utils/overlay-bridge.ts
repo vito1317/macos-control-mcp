@@ -56,22 +56,31 @@ function spawnOverlay(): ChildProcess {
     detached: false,
   });
 
+  const proc = overlayProcess;
+
+  function flushPending() {
+    if (overlayReady) return; // Already flushed
+    overlayReady = true;
+    for (const cmd of pendingCommands) {
+      proc?.stdin?.write(cmd + '\n');
+    }
+    pendingCommands = [];
+    for (const r of readyResolvers) r();
+    readyResolvers = [];
+  }
+
   overlayProcess.stdout?.on('data', (data: Buffer) => {
     const lines = data.toString().split('\n').filter(l => l.trim());
     for (const line of lines) {
       if (line === 'READY') {
-        overlayReady = true;
-        // Flush pending commands
-        for (const cmd of pendingCommands) {
-          overlayProcess?.stdin?.write(cmd + '\n');
-        }
-        pendingCommands = [];
-        // Resolve any waiters
-        for (const resolve of readyResolvers) resolve();
-        readyResolvers = [];
+        flushPending();
       }
     }
   });
+
+  // Fallback: if READY not received within 500ms, assume ready
+  // (backwards compat with older overlay binary that doesn't send READY)
+  setTimeout(() => flushPending(), 500);
 
   overlayProcess.stderr?.on('data', () => {
     // Log errors but don't crash
