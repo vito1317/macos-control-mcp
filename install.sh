@@ -108,7 +108,7 @@ register_mcp() {
     echo -e "${BLUE}[4/4] Registering MCP server...${NC}"
 
     if command -v claude &> /dev/null; then
-        claude mcp add macos-control -s user -- node "$INSTALL_DIR/dist/index.js" < /dev/null 2>&1
+        claude mcp add macos-control -s user -- node "$INSTALL_DIR/dist/index.js" < /dev/null 2>&1 || true
         echo -e "${GREEN}[OK]${NC} MCP server registered via 'claude mcp add'"
     else
         echo -e "${YELLOW}[WARN]${NC} 'claude' CLI not found. Please register manually:"
