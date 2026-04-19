@@ -5,6 +5,7 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createServer } from './server.js';
 import { isHelperAvailable } from './utils/swift-bridge.js';
+import { startWsBridge, stopWsBridge } from './utils/ws-bridge.js';
 
 async function main() {
   // Check Swift helper availability
@@ -17,17 +18,22 @@ async function main() {
     // Continue anyway — some tools (terminal, screenshot) work without it
   }
 
+  // Start WebSocket bridge for Chrome extension communication
+  startWsBridge();
+
   const server = createServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
   // Graceful shutdown
   process.on('SIGINT', async () => {
+    stopWsBridge();
     await server.close();
     process.exit(0);
   });
 
   process.on('SIGTERM', async () => {
+    stopWsBridge();
     await server.close();
     process.exit(0);
   });

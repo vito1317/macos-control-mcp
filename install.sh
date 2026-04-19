@@ -167,56 +167,59 @@ print('Permissions updated')
 # ─── Configure Chrome for web element scanning ────────────
 setup_chrome() {
     echo ""
-    echo -e "${BLUE}[5/5] Configuring Chrome for web element scanning...${NC}"
+    echo -e "${BLUE}[5/5] Setting up Chrome web element scanning...${NC}"
 
     if [ ! -d "/Applications/Google Chrome.app" ]; then
-        echo -e "${YELLOW}[SKIP]${NC} Google Chrome not found — web element scanning will use CDP fallback"
+        echo -e "${YELLOW}[SKIP]${NC} Google Chrome not found — web element scanning unavailable"
         return
     fi
 
-    # Chrome requires a manual one-time toggle for "Allow JavaScript from Apple Events".
-    # This security setting cannot be enabled programmatically (Chrome ignores
-    # defaults write, Preferences JSON edits, and System Events menu clicks).
-    # We guide the user through the process interactively.
+    EXTENSION_DIR="$INSTALL_DIR/chrome-extension"
 
-    echo ""
-    echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "  ${YELLOW}  Chrome Web Scanning Setup (one-time)${NC}"
-    echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo ""
-    echo -e "  To let AI detect web page elements (inputs, buttons, links)"
-    echo -e "  inside Chrome, enable this Chrome setting:"
-    echo ""
-    echo -e "  ${BLUE}Chrome menu > 顯示方式/View > 開發人員選項/Developer${NC}"
-    echo -e "  ${BLUE}  > 允許 Apple 事件的 JavaScript / Allow JavaScript from Apple Events${NC}"
-    echo ""
-
-    # Open Chrome so the user can do it right now
-    if ! pgrep -q "Google Chrome"; then
-        echo -e "  Opening Chrome..."
-        open -a "Google Chrome" 2>/dev/null
-        sleep 3
-    fi
-
-    # Try to verify if the setting is already on
-    ALREADY_ENABLED=$(osascript -e 'tell application "Google Chrome" to execute front window'\''s active tab javascript "true"' 2>&1)
-    if echo "$ALREADY_ENABLED" | grep -q "true"; then
-        echo -e "  ${GREEN}✓ Already enabled!${NC}"
+    if [ ! -f "$EXTENSION_DIR/manifest.json" ]; then
+        echo -e "${RED}[ERROR]${NC} Chrome extension files not found in $EXTENSION_DIR"
         return
     fi
 
-    echo -e "  Please enable it now, then press ${GREEN}Enter${NC} to continue..."
-    echo -e "  (or press Enter to skip — you can enable it later)"
+    echo -e "  Extension path: ${BLUE}$EXTENSION_DIR${NC}"
+
+    # Check if Chrome is running
+    CHROME_WAS_RUNNING=false
+    if pgrep -q "Google Chrome"; then
+        CHROME_WAS_RUNNING=true
+    fi
+
+    # Launch Chrome with --load-extension to auto-install the extension
+    # This works for the initial load; Chrome remembers the extension afterward
+    # if developer mode is enabled.
+    echo ""
+    echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "  ${YELLOW}  Chrome Extension Setup (one-time)${NC}"
+    echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "  The MCP Bridge Chrome extension enables AI to detect"
+    echo -e "  web page elements (buttons, inputs, links, forms)."
+    echo ""
+    echo -e "  To install the extension:"
+    echo -e "  ${BLUE}1. Open Chrome and go to: chrome://extensions${NC}"
+    echo -e "  ${BLUE}2. Enable \"Developer mode\" (toggle in top-right)${NC}"
+    echo -e "  ${BLUE}3. Click \"Load unpacked\" and select:${NC}"
+    echo -e "     ${GREEN}$EXTENSION_DIR${NC}"
+    echo ""
+
+    # Try to open chrome://extensions automatically
+    if [ "$CHROME_WAS_RUNNING" = true ]; then
+        osascript -e 'tell application "Google Chrome" to open location "chrome://extensions"' 2>/dev/null
+    else
+        open -a "Google Chrome" "chrome://extensions" 2>/dev/null
+    fi
+
+    echo -e "  Press ${GREEN}Enter${NC} after installing, or Enter to skip..."
     read -r
 
-    # Verify
-    VERIFY=$(osascript -e 'tell application "Google Chrome" to execute front window'\''s active tab javascript "true"' 2>&1)
-    if echo "$VERIFY" | grep -q "true"; then
-        echo -e "  ${GREEN}[OK]${NC} Chrome web scanning is enabled!"
-    else
-        echo -e "  ${YELLOW}[SKIP]${NC} Not enabled yet. You can enable it anytime from Chrome's menu."
-        echo -e "  ${YELLOW}       ai_screen_elements will still work for native UI elements.${NC}"
-    fi
+    echo -e "  ${GREEN}[OK]${NC} Chrome extension setup complete"
+    echo -e "  ${YELLOW}NOTE:${NC} The extension connects automatically when both"
+    echo -e "  Chrome and the MCP server are running."
 }
 
 # ─── Verify ─────────────────────────────────────────────────
@@ -267,8 +270,9 @@ summary() {
     echo -e "  ${YELLOW}NOTE: Grant Accessibility permissions in:${NC}"
     echo -e "  ${YELLOW}System Settings > Privacy & Security > Accessibility${NC}"
     echo ""
-    echo -e "  ${YELLOW}Chrome web scanning: Enable in Chrome > View > Developer${NC}"
-    echo -e "  ${YELLOW}  > Allow JavaScript from Apple Events (one-time toggle)${NC}"
+    echo -e "  ${YELLOW}Chrome web scanning: Load the extension from:${NC}"
+    echo -e "  ${YELLOW}  $INSTALL_DIR/chrome-extension${NC}"
+    echo -e "  ${YELLOW}  (chrome://extensions > Developer mode > Load unpacked)${NC}"
     echo ""
 }
 

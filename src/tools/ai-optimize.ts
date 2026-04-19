@@ -9,6 +9,7 @@ import { readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { addCoordinateGrid, optimizeForAI, annotatePoints } from '../utils/image.js';
 import WebSocket from 'ws';
+import { startWsBridge, requestWebScan, isExtensionConnected } from '../utils/ws-bridge.js';
 
 async function captureScreenBuffer(): Promise<Buffer> {
   const tempFile = `/tmp/mcp-capture-${Date.now()}.png`;
@@ -128,6 +129,23 @@ async function getChromeWindowOffset(): Promise<{ x: number; y: number }> {
  * Returns null if both methods fail.
  */
 async function tryGetWebElements(cdpPort: number = 9222): Promise<WebElementsResult | null> {
+  // Strategy 0: WebSocket bridge to Chrome extension (most reliable, no config needed)
+  if (isExtensionConnected()) {
+    try {
+      const wsResult = await requestWebScan();
+      if (wsResult && wsResult.success && wsResult.elements?.length > 0) {
+        const offset = await getChromeWindowOffset();
+        return {
+          elements: wsResult.elements,
+          title: wsResult.title,
+          url: wsResult.url,
+          windowOffsetX: offset.x,
+          windowOffsetY: offset.y,
+        };
+      }
+    } catch { /* WS bridge failed, try next strategy */ }
+  }
+
   // Strategy 1: Try CDP first (faster, more reliable when available)
   try {
     const http = await import('node:http');
@@ -646,9 +664,10 @@ if let data = try? JSONSerialization.data(withJSONObject: output, options: []),
               });
             }
           }
-          webElementsNote = ` (includes ${webResult.elements.length} web page elements via CDP)`;
+          const source = isExtensionConnected() ? 'extension' : 'CDP/AppleScript';
+          webElementsNote = ` (includes ${webResult.elements.length} web page elements via ${source})`;
         } else {
-          webElementsNote = ' (web page elements unavailable — enable Chrome > View > Developer > Allow JavaScript from Apple Events)';
+          webElementsNote = ' (web page elements unavailable — install the MCP Bridge extension in Chrome)';
         }
       }
 

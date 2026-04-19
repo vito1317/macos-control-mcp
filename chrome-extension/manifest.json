@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "macOS Control MCP Bridge",
+  "version": "1.0.0",
+  "description": "Bridges AI desktop control tools with Chrome web page elements. Allows AI to detect and interact with buttons, inputs, links, and other interactive web elements.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
