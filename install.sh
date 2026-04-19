@@ -181,45 +181,74 @@ setup_chrome() {
         return
     fi
 
-    echo -e "  Extension path: ${BLUE}$EXTENSION_DIR${NC}"
+    echo -e "  Installing MCP Bridge Chrome extension..."
 
-    # Check if Chrome is running
-    CHROME_WAS_RUNNING=false
+    # ── Step 1: Quit Chrome if running (required to edit Preferences) ──
     if pgrep -q "Google Chrome"; then
-        CHROME_WAS_RUNNING=true
+        echo -e "  ${YELLOW}Closing Chrome for extension installation...${NC}"
+        osascript -e 'tell application "Google Chrome" to quit' 2>/dev/null
+        # Wait for Chrome to fully exit (it writes Preferences on quit)
+        for i in $(seq 1 15); do
+            if ! pgrep -q "Google Chrome"; then break; fi
+            sleep 1
+        done
+        if pgrep -q "Google Chrome"; then
+            echo -e "  ${RED}[ERROR]${NC} Chrome did not close. Please close Chrome manually and re-run."
+            return
+        fi
+        sleep 1  # extra wait for file writes to flush
     fi
 
-    # Launch Chrome with --load-extension to auto-install the extension
-    # This works for the initial load; Chrome remembers the extension afterward
-    # if developer mode is enabled.
-    echo ""
-    echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "  ${YELLOW}  Chrome Extension Setup (one-time)${NC}"
-    echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo ""
-    echo -e "  The MCP Bridge Chrome extension enables AI to detect"
-    echo -e "  web page elements (buttons, inputs, links, forms)."
-    echo ""
-    echo -e "  To install the extension:"
-    echo -e "  ${BLUE}1. Open Chrome and go to: chrome://extensions${NC}"
-    echo -e "  ${BLUE}2. Enable \"Developer mode\" (toggle in top-right)${NC}"
-    echo -e "  ${BLUE}3. Click \"Load unpacked\" and select:${NC}"
-    echo -e "     ${GREEN}$EXTENSION_DIR${NC}"
-    echo ""
+    # ── Step 2: Enable developer mode in Chrome Preferences ──
+    # Find the active Chrome profile's Preferences file
+    CHROME_SUPPORT_DIR="$HOME/Library/Application Support/Google/Chrome"
+    PREFS_FILE="$CHROME_SUPPORT_DIR/Default/Preferences"
 
-    # Try to open chrome://extensions automatically
-    if [ "$CHROME_WAS_RUNNING" = true ]; then
-        osascript -e 'tell application "Google Chrome" to open location "chrome://extensions"' 2>/dev/null
+    if [ -f "$PREFS_FILE" ]; then
+        python3 -c "
+import json, sys, shutil
+
+prefs_path = '$PREFS_FILE'
+
+# Backup
+shutil.copy2(prefs_path, prefs_path + '.bak')
+
+with open(prefs_path, 'r') as f:
+    prefs = json.load(f)
+
+# Enable developer mode for extensions
+prefs.setdefault('extensions', {}).setdefault('ui', {})['developer_mode'] = True
+
+with open(prefs_path, 'w') as f:
+    json.dump(prefs, f, separators=(',', ':'))
+
+print('Developer mode enabled in Preferences')
+" 2>&1
+        echo -e "  ${GREEN}✓${NC} Developer mode enabled"
     else
-        open -a "Google Chrome" "chrome://extensions" 2>/dev/null
+        echo -e "  ${YELLOW}[WARN]${NC} Chrome Preferences not found — developer mode may need manual enable"
     fi
 
-    echo -e "  Press ${GREEN}Enter${NC} after installing, or Enter to skip..."
-    read -r
+    # ── Step 3: Relaunch Chrome with --load-extension ──
+    echo -e "  ${GREEN}✓${NC} Loading extension from: $EXTENSION_DIR"
+    open -a "Google Chrome" --args --load-extension="$EXTENSION_DIR" 2>/dev/null
 
-    echo -e "  ${GREEN}[OK]${NC} Chrome extension setup complete"
-    echo -e "  ${YELLOW}NOTE:${NC} The extension connects automatically when both"
-    echo -e "  Chrome and the MCP server are running."
+    sleep 3
+
+    # Verify Chrome launched
+    if pgrep -q "Google Chrome"; then
+        echo -e "  ${GREEN}[OK]${NC} Chrome relaunched with MCP Bridge extension"
+    else
+        echo -e "  ${YELLOW}[WARN]${NC} Chrome may need manual launch"
+    fi
+
+    echo ""
+    echo -e "  ${GREEN}✓${NC} Extension auto-installed. It connects to the MCP server"
+    echo -e "    automatically whenever both Chrome and the server are running."
+    echo ""
+    echo -e "  ${YELLOW}NOTE:${NC} Chrome may show a \"Disable developer mode extensions\""
+    echo -e "  popup on first launch — just dismiss it. This is normal for"
+    echo -e "  locally-installed extensions."
 }
 
 # ─── Verify ─────────────────────────────────────────────────
@@ -246,6 +275,12 @@ verify() {
         echo -e "  ${RED}✗${NC} MCP server NOT built"
     fi
 
+    if [ -f "$INSTALL_DIR/chrome-extension/manifest.json" ]; then
+        echo -e "  ${GREEN}✓${NC} Chrome extension"
+    else
+        echo -e "  ${RED}✗${NC} Chrome extension NOT found"
+    fi
+
     if command -v claude &> /dev/null; then
         echo -e "  ${GREEN}✓${NC} Claude CLI"
     else
@@ -270,9 +305,8 @@ summary() {
     echo -e "  ${YELLOW}NOTE: Grant Accessibility permissions in:${NC}"
     echo -e "  ${YELLOW}System Settings > Privacy & Security > Accessibility${NC}"
     echo ""
-    echo -e "  ${YELLOW}Chrome web scanning: Load the extension from:${NC}"
-    echo -e "  ${YELLOW}  $INSTALL_DIR/chrome-extension${NC}"
-    echo -e "  ${YELLOW}  (chrome://extensions > Developer mode > Load unpacked)${NC}"
+    echo -e "  ${YELLOW}Chrome web scanning: Extension auto-installed.${NC}"
+    echo -e "  ${YELLOW}  If removed, reload from: $INSTALL_DIR/chrome-extension${NC}"
     echo ""
 }
 
