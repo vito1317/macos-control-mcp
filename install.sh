@@ -174,81 +174,50 @@ setup_chrome() {
         return
     fi
 
-    EXTENSION_DIR="$INSTALL_DIR/chrome-extension"
+    CDP_PORT=9222
 
-    if [ ! -f "$EXTENSION_DIR/manifest.json" ]; then
-        echo -e "${RED}[ERROR]${NC} Chrome extension files not found in $EXTENSION_DIR"
-        return
-    fi
+    echo -e "  Enabling Chrome DevTools Protocol (CDP) for web scanning..."
 
-    echo -e "  Installing MCP Bridge Chrome extension..."
-
-    # ── Step 1: Quit Chrome if running (required to edit Preferences) ──
+    # ── Quit Chrome if running ──
     if pgrep -q "Google Chrome"; then
-        echo -e "  ${YELLOW}Closing Chrome for extension installation...${NC}"
+        echo -e "  ${YELLOW}Restarting Chrome with CDP enabled...${NC}"
         osascript -e 'tell application "Google Chrome" to quit' 2>/dev/null
-        # Wait for Chrome to fully exit (it writes Preferences on quit)
         for i in $(seq 1 15); do
             if ! pgrep -q "Google Chrome"; then break; fi
             sleep 1
         done
         if pgrep -q "Google Chrome"; then
-            echo -e "  ${RED}[ERROR]${NC} Chrome did not close. Please close Chrome manually and re-run."
+            echo -e "  ${YELLOW}[WARN]${NC} Chrome did not close — will auto-enable CDP on first use"
             return
         fi
-        sleep 1  # extra wait for file writes to flush
+        sleep 1
     fi
 
-    # ── Step 2: Enable developer mode in Chrome Preferences ──
-    # Find the active Chrome profile's Preferences file
-    CHROME_SUPPORT_DIR="$HOME/Library/Application Support/Google/Chrome"
-    PREFS_FILE="$CHROME_SUPPORT_DIR/Default/Preferences"
+    # ── Relaunch Chrome with CDP flag ──
+    open -a "Google Chrome" --args --remote-debugging-port=$CDP_PORT 2>/dev/null
+    echo -e "  Waiting for Chrome to start..."
 
-    if [ -f "$PREFS_FILE" ]; then
-        python3 -c "
-import json, sys, shutil
+    # Wait for CDP to become available
+    CDP_READY=false
+    for i in $(seq 1 15); do
+        sleep 1
+        if curl -s --max-time 1 "http://127.0.0.1:$CDP_PORT/json/version" 2>/dev/null | grep -q "Chrome"; then
+            CDP_READY=true
+            break
+        fi
+    done
 
-prefs_path = '$PREFS_FILE'
-
-# Backup
-shutil.copy2(prefs_path, prefs_path + '.bak')
-
-with open(prefs_path, 'r') as f:
-    prefs = json.load(f)
-
-# Enable developer mode for extensions
-prefs.setdefault('extensions', {}).setdefault('ui', {})['developer_mode'] = True
-
-with open(prefs_path, 'w') as f:
-    json.dump(prefs, f, separators=(',', ':'))
-
-print('Developer mode enabled in Preferences')
-" 2>&1
-        echo -e "  ${GREEN}✓${NC} Developer mode enabled"
+    if [ "$CDP_READY" = true ]; then
+        echo -e "  ${GREEN}[OK]${NC} Chrome CDP enabled on port $CDP_PORT"
+        echo -e "  ${GREEN}✓${NC} Web element scanning is ready!"
     else
-        echo -e "  ${YELLOW}[WARN]${NC} Chrome Preferences not found — developer mode may need manual enable"
-    fi
-
-    # ── Step 3: Relaunch Chrome with --load-extension ──
-    echo -e "  ${GREEN}✓${NC} Loading extension from: $EXTENSION_DIR"
-    open -a "Google Chrome" --args --load-extension="$EXTENSION_DIR" 2>/dev/null
-
-    sleep 3
-
-    # Verify Chrome launched
-    if pgrep -q "Google Chrome"; then
-        echo -e "  ${GREEN}[OK]${NC} Chrome relaunched with MCP Bridge extension"
-    else
-        echo -e "  ${YELLOW}[WARN]${NC} Chrome may need manual launch"
+        echo -e "  ${YELLOW}[WARN]${NC} CDP not detected — will auto-enable on first use"
     fi
 
     echo ""
-    echo -e "  ${GREEN}✓${NC} Extension auto-installed. It connects to the MCP server"
-    echo -e "    automatically whenever both Chrome and the server are running."
-    echo ""
-    echo -e "  ${YELLOW}NOTE:${NC} Chrome may show a \"Disable developer mode extensions\""
-    echo -e "  popup on first launch — just dismiss it. This is normal for"
-    echo -e "  locally-installed extensions."
+    echo -e "  ${YELLOW}NOTE:${NC} If Chrome is reopened without CDP, the MCP server"
+    echo -e "  will automatically restart Chrome with CDP enabled on"
+    echo -e "  the first web element scan."
 }
 
 # ─── Verify ─────────────────────────────────────────────────
@@ -275,10 +244,10 @@ verify() {
         echo -e "  ${RED}✗${NC} MCP server NOT built"
     fi
 
-    if [ -f "$INSTALL_DIR/chrome-extension/manifest.json" ]; then
-        echo -e "  ${GREEN}✓${NC} Chrome extension"
+    if curl -s --max-time 1 "http://127.0.0.1:9222/json/version" 2>/dev/null | grep -q "Chrome"; then
+        echo -e "  ${GREEN}✓${NC} Chrome CDP (port 9222)"
     else
-        echo -e "  ${RED}✗${NC} Chrome extension NOT found"
+        echo -e "  ${YELLOW}~${NC} Chrome CDP (will auto-enable on first scan)"
     fi
 
     if command -v claude &> /dev/null; then
@@ -305,8 +274,8 @@ summary() {
     echo -e "  ${YELLOW}NOTE: Grant Accessibility permissions in:${NC}"
     echo -e "  ${YELLOW}System Settings > Privacy & Security > Accessibility${NC}"
     echo ""
-    echo -e "  ${YELLOW}Chrome web scanning: Extension auto-installed.${NC}"
-    echo -e "  ${YELLOW}  If removed, reload from: $INSTALL_DIR/chrome-extension${NC}"
+    echo -e "  ${YELLOW}Chrome web scanning: auto-enabled via CDP.${NC}"
+    echo -e "  ${YELLOW}  If Chrome is reopened normally, CDP re-enables on first scan.${NC}"
     echo ""
 }
 
