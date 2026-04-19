@@ -14,19 +14,33 @@ export const keyboardTools = {
     handler: async (args: { text: string }) => {
       // Show typing animation at the focused input field's caret position
       try {
+        let animX = 0, animY = 0;
+        let hasPosition = false;
+
         const focusPos = await execSwift('accessibility', 'focused-position');
         if (focusPos?.success) {
           const fp = focusPos as any;
-          const px = fp.x ?? 400;
-          const py = fp.y ?? 400;
-          // Position the text bubble right at the caret
-          showTypeAnimation(px, py, args.text.substring(0, 30), { color: '#AF52DE' });
-        } else {
+          // Validate non-zero — accessibilityFocusedPosition returns (0,0) when
+          // the caret query fails (CGRect.zero), so we must check explicitly
+          if (typeof fp.x === 'number' && typeof fp.y === 'number' && (fp.x > 5 || fp.y > 5)) {
+            animX = fp.x;
+            animY = fp.y;
+            hasPosition = true;
+          }
+        }
+
+        if (!hasPosition) {
           // Fallback to mouse position
           const pos = await execSwift('mouse', 'position');
-          if (pos?.success) {
-            showTypeAnimation((pos as any).x, (pos as any).y, args.text.substring(0, 30), { color: '#AF52DE' });
+          if (pos?.success && typeof (pos as any).x === 'number') {
+            animX = (pos as any).x;
+            animY = (pos as any).y;
+            hasPosition = true;
           }
+        }
+
+        if (hasPosition) {
+          showTypeAnimation(animX, animY, args.text.substring(0, 30), { color: '#AF52DE' });
         }
       } catch { /* skip animation if position fails */ }
       const result = await execSwift('keyboard', 'type', args.text);
@@ -55,15 +69,30 @@ export const keyboardTools = {
     handler: async (args: { keys: string }) => {
       // Show hotkey animation at focused element or fallback to mouse
       try {
+        let animX = 0, animY = 0;
+        let hasPosition = false;
+
         const focusPos = await execSwift('accessibility', 'focused-position');
         if (focusPos?.success) {
           const fp = focusPos as any;
-          showTypeAnimation(fp.x, fp.y, `⌨️ ${args.keys}`, { color: '#5856D6', duration: 1.0 });
-        } else {
-          const pos = await execSwift('mouse', 'position');
-          if (pos?.success) {
-            showTypeAnimation((pos as any).x, (pos as any).y, `⌨️ ${args.keys}`, { color: '#5856D6', duration: 1.0 });
+          if (typeof fp.x === 'number' && typeof fp.y === 'number' && (fp.x > 5 || fp.y > 5)) {
+            animX = fp.x;
+            animY = fp.y;
+            hasPosition = true;
           }
+        }
+
+        if (!hasPosition) {
+          const pos = await execSwift('mouse', 'position');
+          if (pos?.success && typeof (pos as any).x === 'number') {
+            animX = (pos as any).x;
+            animY = (pos as any).y;
+            hasPosition = true;
+          }
+        }
+
+        if (hasPosition) {
+          showTypeAnimation(animX, animY, `⌨️ ${args.keys}`, { color: '#5856D6', duration: 1.0 });
         }
       } catch { /* skip animation */ }
       const result = await execSwift('keyboard', 'hotkey', args.keys);

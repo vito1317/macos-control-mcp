@@ -8,7 +8,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { addCoordinateGrid, optimizeForAI, cropRegion, annotatePoints } from '../utils/image.js';
 import { execSwift } from '../utils/swift-bridge.js';
-import sharp from 'sharp';
 
 async function captureScreen(options: {
   region?: { x: number; y: number; width: number; height: number };
@@ -43,25 +42,17 @@ async function captureScreen(options: {
 }
 
 /**
- * Resize a physical-pixel screenshot to logical resolution.
- * On Retina displays, screencapture outputs 2x (or 3x) the logical resolution.
- * All coordinate APIs (Accessibility, CGEvent) use logical points, so the
- * image must be in logical resolution for grid/annotations to align correctly.
+ * Get the Retina scale factor for the main screen.
  */
-async function toLogicalResolution(buffer: Buffer): Promise<Buffer> {
-  const screenInfoResult = await execSwift('screen', 'info');
-  const screens = screenInfoResult?.screens as any[] | undefined;
-  const mainScreen = screens?.find((s: any) => s.isMain) || screens?.[0];
-  const scaleFactor = mainScreen?.scaleFactor || 2;
-
-  if (scaleFactor > 1) {
-    const metadata = await sharp(buffer).metadata();
-    if (metadata.width) {
-      const logicalWidth = Math.round(metadata.width / scaleFactor);
-      return sharp(buffer).resize(logicalWidth).png().toBuffer();
-    }
+async function getScaleFactor(): Promise<number> {
+  try {
+    const result = await execSwift('screen', 'info');
+    const screens = result?.screens as any[] | undefined;
+    const mainScreen = screens?.find((s: any) => s.isMain) || screens?.[0];
+    return mainScreen?.scaleFactor || 1;
+  } catch {
+    return 1;
   }
-  return buffer;
 }
 
 export const screenshotTools = {
@@ -100,13 +91,14 @@ export const screenshotTools = {
         windowId: args.windowId,
       });
 
-      // Resize to logical resolution so grid coordinates match screen coordinate system
+      // Add coordinate grid — keep physical resolution, scale grid by scaleFactor
+      // so labels show logical coordinates that match mouse_click / CGEvent
       if (showGrid) {
-        imageBuffer = await toLogicalResolution(imageBuffer);
+        const sf = await getScaleFactor();
         imageBuffer = await addCoordinateGrid(imageBuffer, {
           spacing: gridSpacing,
           showLabels: true,
-        });
+        }, sf);
       }
 
       // Optimize for AI
@@ -158,9 +150,9 @@ export const screenshotTools = {
       }));
 
       let imageBuffer = await captureScreen({});
-      // Resize to logical resolution so annotation coordinates match screen coordinates
-      imageBuffer = await toLogicalResolution(imageBuffer);
-      imageBuffer = await annotatePoints(imageBuffer, pointsWithColor);
+      // Keep physical resolution, scale annotations by scaleFactor
+      const sf = await getScaleFactor();
+      imageBuffer = await annotatePoints(imageBuffer, pointsWithColor, sf);
 
       const optimized = await optimizeForAI(imageBuffer, { maxWidth: maxWidthVal });
       const base64 = optimized.buffer.toString('base64');

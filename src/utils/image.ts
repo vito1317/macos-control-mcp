@@ -13,11 +13,17 @@ const DEFAULT_GRID_OPTIONS: CoordinateGridOptions = {
 };
 
 /**
- * Overlay a coordinate grid on a screenshot to help AI identify positions
+ * Overlay a coordinate grid on a screenshot to help AI identify positions.
+ *
+ * When scaleFactor > 1 (Retina), the image is in physical pixels but coordinate
+ * APIs use logical points. Grid lines are drawn at logicalCoord * scaleFactor
+ * pixel positions, but labels show the logical coordinate values so AI returns
+ * coordinates that can be used directly with mouse_click / CGEvent.
  */
 export async function addCoordinateGrid(
   imageBuffer: Buffer,
-  options: Partial<CoordinateGridOptions> = {}
+  options: Partial<CoordinateGridOptions> = {},
+  scaleFactor: number = 1
 ): Promise<Buffer> {
   const opts = { ...DEFAULT_GRID_OPTIONS, ...options };
   const metadata = await sharp(imageBuffer).metadata();
@@ -33,37 +39,47 @@ export async function addCoordinateGrid(
   const labelColor = '#FFFFFF';
   const lineColor = opts.color;
   const lineOpacity = opts.opacity;
+  const sf = scaleFactor || 1;
+  const fontSize = Math.round((opts.fontSize ?? 12) * sf);
 
-  // Vertical lines
-  for (let x = opts.spacing; x < width; x += opts.spacing) {
+  // Vertical lines — iterate in logical coordinates, draw at physical pixel positions
+  for (let logicalX = opts.spacing; logicalX * sf < width; logicalX += opts.spacing) {
+    const px = Math.round(logicalX * sf);
     svgParts.push(
-      `<line x1="${x}" y1="0" x2="${x}" y2="${height}" stroke="${lineColor}" stroke-opacity="${lineOpacity}" stroke-width="1" stroke-dasharray="4,4"/>`
+      `<line x1="${px}" y1="0" x2="${px}" y2="${height}" stroke="${lineColor}" stroke-opacity="${lineOpacity}" stroke-width="${sf}" stroke-dasharray="${4 * sf},${4 * sf}"/>`
     );
     if (opts.showLabels) {
+      const labelW = Math.round(32 * sf);
+      const labelH = Math.round(16 * sf);
       svgParts.push(
-        `<rect x="${x - 16}" y="0" width="32" height="16" fill="${labelBg}" rx="2"/>`,
-        `<text x="${x}" y="12" text-anchor="middle" font-size="${opts.fontSize}" fill="${labelColor}" font-family="monospace">${x}</text>`
+        `<rect x="${px - labelW / 2}" y="0" width="${labelW}" height="${labelH}" fill="${labelBg}" rx="2"/>`,
+        `<text x="${px}" y="${Math.round(12 * sf)}" text-anchor="middle" font-size="${fontSize}" fill="${labelColor}" font-family="monospace">${logicalX}</text>`
       );
     }
   }
 
-  // Horizontal lines
-  for (let y = opts.spacing; y < height; y += opts.spacing) {
+  // Horizontal lines — iterate in logical coordinates, draw at physical pixel positions
+  for (let logicalY = opts.spacing; logicalY * sf < height; logicalY += opts.spacing) {
+    const py = Math.round(logicalY * sf);
     svgParts.push(
-      `<line x1="0" y1="${y}" x2="${width}" y2="${y}" stroke="${lineColor}" stroke-opacity="${lineOpacity}" stroke-width="1" stroke-dasharray="4,4"/>`
+      `<line x1="0" y1="${py}" x2="${width}" y2="${py}" stroke="${lineColor}" stroke-opacity="${lineOpacity}" stroke-width="${sf}" stroke-dasharray="${4 * sf},${4 * sf}"/>`
     );
     if (opts.showLabels) {
+      const labelW = Math.round(32 * sf);
+      const labelH = Math.round(16 * sf);
       svgParts.push(
-        `<rect x="0" y="${y - 8}" width="32" height="16" fill="${labelBg}" rx="2"/>`,
-        `<text x="16" y="${y + 4}" text-anchor="middle" font-size="${opts.fontSize}" fill="${labelColor}" font-family="monospace">${y}</text>`
+        `<rect x="0" y="${py - labelH / 2}" width="${labelW}" height="${labelH}" fill="${labelBg}" rx="2"/>`,
+        `<text x="${Math.round(16 * sf)}" y="${py + Math.round(4 * sf)}" text-anchor="middle" font-size="${fontSize}" fill="${labelColor}" font-family="monospace">${logicalY}</text>`
       );
     }
   }
 
   // Origin label
+  const originW = Math.round(24 * sf);
+  const originH = Math.round(16 * sf);
   svgParts.push(
-    `<rect x="0" y="0" width="24" height="16" fill="${labelBg}" rx="2"/>`,
-    `<text x="12" y="12" text-anchor="middle" font-size="${opts.fontSize}" fill="${labelColor}" font-family="monospace">0,0</text>`
+    `<rect x="0" y="0" width="${originW}" height="${originH}" fill="${labelBg}" rx="2"/>`,
+    `<text x="${originW / 2}" y="${Math.round(12 * sf)}" text-anchor="middle" font-size="${fontSize}" fill="${labelColor}" font-family="monospace">0,0</text>`
   );
 
   svgParts.push('</svg>');
@@ -147,30 +163,41 @@ export async function cropRegion(imageBuffer: Buffer, region: Rect): Promise<Buf
 }
 
 /**
- * Annotate specific points on a screenshot (e.g., element centers)
+ * Annotate specific points on a screenshot (e.g., element centers).
+ *
+ * Points are in logical coordinates. When scaleFactor > 1 (Retina), markers
+ * are drawn at logicalCoord * scaleFactor pixel positions on the physical image.
  */
 export async function annotatePoints(
   imageBuffer: Buffer,
-  points: Array<{ x: number; y: number; label: string; color?: string }>
+  points: Array<{ x: number; y: number; label: string; color?: string }>,
+  scaleFactor: number = 1
 ): Promise<Buffer> {
   const metadata = await sharp(imageBuffer).metadata();
   const width = metadata.width!;
   const height = metadata.height!;
+  const sf = scaleFactor || 1;
 
   const svgParts: string[] = [];
   svgParts.push(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">`);
 
   for (const point of points) {
     const color = point.color ?? '#FF0000';
+    const px = Math.round(point.x * sf);
+    const py = Math.round(point.y * sf);
+    const r = Math.round(6 * sf);
+    const strokeW = Math.round(2 * sf);
+    const fontSize = Math.round(12 * sf);
     // Circle marker
     svgParts.push(
-      `<circle cx="${point.x}" cy="${point.y}" r="6" fill="${color}" fill-opacity="0.8" stroke="white" stroke-width="2"/>`,
+      `<circle cx="${px}" cy="${py}" r="${r}" fill="${color}" fill-opacity="0.8" stroke="white" stroke-width="${strokeW}"/>`,
     );
     // Label background
-    const labelWidth = Math.max(point.label.length * 8 + 8, 30);
+    const labelWidth = Math.max(point.label.length * Math.round(8 * sf) + Math.round(8 * sf), Math.round(30 * sf));
+    const labelHeight = Math.round(20 * sf);
     svgParts.push(
-      `<rect x="${point.x + 10}" y="${point.y - 10}" width="${labelWidth}" height="20" fill="rgba(0,0,0,0.75)" rx="4"/>`,
-      `<text x="${point.x + 14}" y="${point.y + 4}" font-size="12" fill="white" font-family="monospace">${escapeXml(point.label)}</text>`
+      `<rect x="${px + Math.round(10 * sf)}" y="${py - Math.round(10 * sf)}" width="${labelWidth}" height="${labelHeight}" fill="rgba(0,0,0,0.75)" rx="${Math.round(4 * sf)}"/>`,
+      `<text x="${px + Math.round(14 * sf)}" y="${py + Math.round(4 * sf)}" font-size="${fontSize}" fill="white" font-family="monospace">${escapeXml(point.label)}</text>`
     );
   }
 

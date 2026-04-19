@@ -8,7 +8,6 @@ import { execFile } from 'node:child_process';
 import { readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { addCoordinateGrid, optimizeForAI, annotatePoints } from '../utils/image.js';
-import sharp from 'sharp';
 import WebSocket from 'ws';
 
 async function captureScreenBuffer(): Promise<Buffer> {
@@ -27,29 +26,18 @@ async function captureScreenBuffer(): Promise<Buffer> {
 }
 
 /**
- * Capture screenshot and resize to logical resolution so that pixel coordinates
- * match the logical point coordinate system used by Accessibility API and CGEvent.
- * On Retina displays, screencapture outputs physical pixels (e.g., 2880x1800)
- * but all coordinate APIs use logical points (e.g., 1440x900).
+ * Get the Retina scale factor for the main screen.
+ * On Retina displays this is typically 2, on non-Retina it's 1.
  */
-async function captureLogicalScreenBuffer(): Promise<Buffer> {
-  const [buffer, screenInfoResult] = await Promise.all([
-    captureScreenBuffer(),
-    execSwift('screen', 'info'),
-  ]);
-
-  const screens = screenInfoResult?.screens as any[] | undefined;
-  const mainScreen = screens?.find((s: any) => s.isMain) || screens?.[0];
-  const scaleFactor = mainScreen?.scaleFactor || 2;
-
-  if (scaleFactor > 1) {
-    const metadata = await sharp(buffer).metadata();
-    if (metadata.width) {
-      const logicalWidth = Math.round(metadata.width / scaleFactor);
-      return sharp(buffer).resize(logicalWidth).png().toBuffer();
-    }
+async function getScaleFactor(): Promise<number> {
+  try {
+    const result = await execSwift('screen', 'info');
+    const screens = result?.screens as any[] | undefined;
+    const mainScreen = screens?.find((s: any) => s.isMain) || screens?.[0];
+    return mainScreen?.scaleFactor || 1;
+  } catch {
+    return 1;
   }
-  return buffer;
 }
 
 export const aiOptimizeTools = {
@@ -80,13 +68,13 @@ export const aiOptimizeTools = {
       // Gather all info in parallel
       const promises: Promise<any>[] = [];
 
-      // 1. Screenshot with grid (use logical resolution so grid coords match screen coords)
+      // 1. Screenshot with grid (keep physical resolution, scale grid to match logical coords)
       if (includeScreenshot) {
         promises.push(
           (async () => {
-            let imgBuffer = await captureLogicalScreenBuffer();
-            imgBuffer = await addCoordinateGrid(imgBuffer, { spacing: gridSpacing });
-            return optimizeForAI(imgBuffer, { maxWidth: maxWidth, format: 'jpeg', quality: 75 });
+            const [imgBuffer, sf] = await Promise.all([captureScreenBuffer(), getScaleFactor()]);
+            const gridded = await addCoordinateGrid(imgBuffer, { spacing: gridSpacing }, sf);
+            return optimizeForAI(gridded, { maxWidth: maxWidth, format: 'jpeg', quality: 75 });
           })()
         );
       } else {
@@ -327,11 +315,12 @@ if let data = try? JSONSerialization.data(withJSONObject: output, options: []),
       const maxWidth = args.maxWidth ?? 1440;
 
       // 1. Get accessibility tree (deep) to find all interactive elements
-      // Use logical resolution so annotation coordinates match accessibility positions
+      // Keep physical resolution, scale annotations by scaleFactor
       const treeArgs = args.pid !== undefined ? [String(args.pid), '8'] : ['', '8'];
-      const [treeResult, imgBuffer] = await Promise.all([
+      const [treeResult, imgBuffer, sf] = await Promise.all([
         execSwift('accessibility', 'tree', ...treeArgs),
-        captureLogicalScreenBuffer(),
+        captureScreenBuffer(),
+        getScaleFactor(),
       ]);
 
       if (!treeResult.success || !treeResult.tree) {
@@ -413,7 +402,7 @@ if let data = try? JSONSerialization.data(withJSONObject: output, options: []),
 
       let annotatedImg = imgBuffer;
       if (annotationPoints.length > 0) {
-        annotatedImg = await annotatePoints(imgBuffer, annotationPoints);
+        annotatedImg = await annotatePoints(imgBuffer, annotationPoints, sf);
       }
 
       const optimized = await optimizeForAI(annotatedImg, { maxWidth, format: 'jpeg', quality: 80 });
@@ -735,10 +724,10 @@ if let data = try? JSONSerialization.data(withJSONObject: output, options: []),
         textParts.push(`\n💡 Use mouse_click with screen=(x,y) coordinates to click elements.`);
         textParts.push(`💡 Coordinates are already converted to screen coordinates (window offset applied).`);
 
-        // 5. Try to capture and annotate screenshot (logical resolution for correct coords)
+        // 5. Try to capture and annotate screenshot (physical resolution, scale annotations)
         let screenshotContent: Array<{ type: string; data?: string; mimeType?: string; text?: string }> = [];
         try {
-          const imgBuffer = await captureLogicalScreenBuffer();
+          const [webImgBuffer, webSf] = await Promise.all([captureScreenBuffer(), getScaleFactor()]);
           const colors = ['#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#007AFF', '#5856D6', '#AF52DE', '#FF2D55'];
           const annotationPoints = elements.slice(0, 200).map((el, i) => ({
             x: el.cx + windowOffsetX,
@@ -747,9 +736,9 @@ if let data = try? JSONSerialization.data(withJSONObject: output, options: []),
             color: colors[i % colors.length],
           }));
 
-          let annotatedImg = imgBuffer;
+          let annotatedImg = webImgBuffer;
           if (annotationPoints.length > 0) {
-            annotatedImg = await annotatePoints(imgBuffer, annotationPoints);
+            annotatedImg = await annotatePoints(webImgBuffer, annotationPoints, webSf);
           }
           const optimized = await optimizeForAI(annotatedImg, { maxWidth: 1440, format: 'jpeg', quality: 80 });
           screenshotContent = [{
