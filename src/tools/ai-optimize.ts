@@ -122,6 +122,66 @@ async function getChromeWindowOffset(): Promise<{ x: number; y: number }> {
   return { x: 0, y: 120 };
 }
 
+/** Track whether we've already attempted to auto-restart Chrome with CDP this session */
+let cdpAutoEnableAttempted = false;
+
+/**
+ * Restart Chrome with --remote-debugging-port enabled.
+ * Chrome will automatically restore previous tabs on restart.
+ * Returns true if Chrome was successfully restarted.
+ */
+async function restartChromeWithCDP(port: number): Promise<boolean> {
+  try {
+    // Check if Chrome is running
+    const isRunning = await new Promise<boolean>((resolve) => {
+      execFile('/usr/bin/pgrep', ['-x', 'Google Chrome'], (err) => resolve(!err));
+    });
+    if (!isRunning) return false;
+
+    // Gracefully quit Chrome (saves session for tab restoration)
+    await new Promise<void>((resolve) => {
+      execFile('/usr/bin/osascript', ['-e', 'tell application "Google Chrome" to quit'], { timeout: 5000 }, () => resolve());
+    });
+
+    // Wait for Chrome to fully exit
+    for (let i = 0; i < 10; i++) {
+      const still = await new Promise<boolean>((resolve) => {
+        execFile('/usr/bin/pgrep', ['-x', 'Google Chrome'], (err) => resolve(!err));
+      });
+      if (!still) break;
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    // Small extra delay for file writes to flush
+    await new Promise(r => setTimeout(r, 500));
+
+    // Relaunch Chrome with CDP flag
+    await new Promise<void>((resolve) => {
+      execFile('/usr/bin/open', ['-a', 'Google Chrome', '--args', `--remote-debugging-port=${port}`], { timeout: 5000 }, () => resolve());
+    });
+
+    // Wait for Chrome and CDP to become available
+    const http = await import('node:http');
+    for (let i = 0; i < 15; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      const ready = await new Promise<boolean>((resolve) => {
+        const req = http.get(`http://127.0.0.1:${port}/json/version`, (res) => {
+          let d = '';
+          res.on('data', (c: Buffer) => d += c);
+          res.on('end', () => resolve(d.includes('Chrome')));
+        });
+        req.on('error', () => resolve(false));
+        req.setTimeout(1000, () => { req.destroy(); resolve(false); });
+      });
+      if (ready) return true;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Try to scan web page elements. Attempts two strategies:
  * 1. CDP (Chrome DevTools Protocol) — requires --remote-debugging-port
@@ -198,7 +258,70 @@ async function tryGetWebElements(cdpPort: number = 9222): Promise<WebElementsRes
         }
       }
     }
-  } catch { /* CDP failed, try AppleScript */ }
+  } catch { /* CDP failed, try auto-enable */ }
+
+  // Strategy 1.5: Auto-enable CDP by restarting Chrome with --remote-debugging-port
+  // Chrome restores tabs automatically on restart, so this is minimally disruptive.
+  // Only attempt once per MCP server session to avoid restart loops.
+  if (!cdpAutoEnableAttempted) {
+    cdpAutoEnableAttempted = true;
+    try {
+      const restarted = await restartChromeWithCDP(cdpPort);
+      if (restarted) {
+        // Retry CDP after restart
+        const http = await import('node:http');
+        const cdpAvailable = await new Promise<boolean>((resolve) => {
+          const req = http.get(`http://127.0.0.1:${cdpPort}/json/version`, (res) => {
+            let d = '';
+            res.on('data', (c: Buffer) => d += c);
+            res.on('end', () => resolve(d.includes('Chrome')));
+          });
+          req.on('error', () => resolve(false));
+          req.setTimeout(2000, () => { req.destroy(); resolve(false); });
+        });
+
+        if (cdpAvailable) {
+          const tabsJson = await new Promise<string>((resolve, reject) => {
+            http.get(`http://127.0.0.1:${cdpPort}/json`, (res) => {
+              let data = '';
+              res.on('data', (chunk: Buffer) => data += chunk);
+              res.on('end', () => resolve(data));
+            }).on('error', reject);
+          });
+
+          const tabs = JSON.parse(tabsJson).filter((t: any) => t.type === 'page');
+          const wsUrl = tabs[0]?.webSocketDebuggerUrl;
+
+          if (wsUrl) {
+            const result = await new Promise<string>((resolve, reject) => {
+              const ws = new WebSocket(wsUrl);
+              const timeout = setTimeout(() => { ws.close(); reject(new Error('CDP timeout')); }, 5000);
+              ws.on('open', () => {
+                ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: WEB_ELEMENTS_JS, returnByValue: true } }));
+              });
+              ws.on('message', (data: WebSocket.Data) => {
+                clearTimeout(timeout);
+                const resp = JSON.parse(data.toString());
+                if (resp.id === 1) {
+                  ws.close();
+                  const val = resp.result?.result?.value;
+                  if (val) resolve(val);
+                  else reject(new Error('JS eval failed'));
+                }
+              });
+              ws.on('error', (err: Error) => { clearTimeout(timeout); reject(err); });
+            });
+
+            const parsed = JSON.parse(result);
+            if (parsed.success) {
+              const offset = await getChromeWindowOffset();
+              return { elements: parsed.elements, title: parsed.title, url: parsed.url, windowOffsetX: offset.x, windowOffsetY: offset.y };
+            }
+          }
+        }
+      }
+    } catch { /* auto-CDP restart failed, try AppleScript */ }
+  }
 
   // Strategy 2: AppleScript — works with normal Chrome (no CDP needed)
   // If "Allow JavaScript from Apple Events" is off, auto-enable it via menu toggle and retry.
