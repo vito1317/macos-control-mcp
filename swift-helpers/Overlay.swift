@@ -336,6 +336,12 @@ class TypeTextAnimation: AnimationItem {
 
         let fadeAlpha = progress > 0.7 ? CGFloat((1.0 - progress) / 0.3) : CGFloat(1.0)
 
+        // Anchor point: position is the mouse cursor / caret location.
+        // Draw everything to the RIGHT and BELOW the anchor so the animation
+        // visually appears at (or just below) the text insertion point.
+        let anchorX = position.x + 4   // slight right offset from cursor
+        let anchorY = position.y + 2   // slight down offset from cursor
+
         // Background pill
         let font = NSFont.systemFont(ofSize: 14, weight: .medium)
         let attrs: [NSAttributedString.Key: Any] = [
@@ -344,13 +350,31 @@ class TypeTextAnimation: AnimationItem {
         ]
         let textSize = (visibleText as NSString).size(withAttributes: attrs)
         let padding: CGFloat = 10
-        // Position bubble below the caret
-        let drawY = position.y + 30
+
+        // Keyboard icon — right at the anchor
+        let kbAlpha = fadeAlpha * 0.6
+        ctx.setFillColor(color.withAlphaComponent(kbAlpha).cgColor)
+        ctx.setStrokeColor(color.withAlphaComponent(kbAlpha).cgColor)
+        ctx.setLineWidth(1.5)
+        let kbRect = CGRect(x: anchorX, y: anchorY, width: 30, height: 18)
+        ctx.stroke(kbRect)
+
+        // Small keys on keyboard icon
+        for row in 0..<2 {
+            for col in 0..<4 {
+                let kx = anchorX + 4 + CGFloat(col) * 7
+                let ky = anchorY + 3 + CGFloat(row) * 7
+                ctx.fill(CGRect(x: kx, y: ky, width: 4, height: 4))
+            }
+        }
+
+        // Text bubble — below the keyboard icon
+        let bubbleY = anchorY + 22
         let bgRect = CGRect(
-            x: position.x - padding,
-            y: drawY,
+            x: anchorX,
+            y: bubbleY,
             width: textSize.width + padding * 2,
-            height: textSize.height + padding * 2
+            height: textSize.height + padding
         )
 
         // Draw rounded background
@@ -363,7 +387,7 @@ class TypeTextAnimation: AnimationItem {
         // Draw text
         if !visibleText.isEmpty {
             (visibleText as NSString).draw(
-                at: NSPoint(x: position.x, y: drawY + padding),
+                at: NSPoint(x: anchorX + padding, y: bubbleY + padding / 2),
                 withAttributes: attrs
             )
         }
@@ -372,26 +396,9 @@ class TypeTextAnimation: AnimationItem {
         if progress < 0.8 {
             let cursorOn = Int(progress * 10) % 2 == 0
             if cursorOn {
-                let cursorX = position.x + textSize.width + 2
+                let cursorX = anchorX + padding + textSize.width + 2
                 ctx.setFillColor(NSColor.white.withAlphaComponent(fadeAlpha).cgColor)
-                ctx.fill(CGRect(x: cursorX, y: drawY + padding, width: 2, height: textSize.height))
-            }
-        }
-
-        // Keyboard icon
-        let kbY = drawY - 25
-        let kbAlpha = fadeAlpha * 0.6
-        ctx.setStrokeColor(color.withAlphaComponent(kbAlpha).cgColor)
-        ctx.setLineWidth(1.5)
-        let kbRect = CGRect(x: position.x - 2, y: kbY, width: 30, height: 18)
-        ctx.stroke(kbRect)
-
-        // Small keys on keyboard icon
-        for row in 0..<2 {
-            for col in 0..<4 {
-                let kx = position.x + 2 + CGFloat(col) * 7
-                let ky = kbY + 3 + CGFloat(row) * 7
-                ctx.fill(CGRect(x: kx, y: ky, width: 4, height: 4))
+                ctx.fill(CGRect(x: cursorX, y: bubbleY + padding / 2, width: 2, height: textSize.height))
             }
         }
     }
