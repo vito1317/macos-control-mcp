@@ -136,7 +136,7 @@ export const aiOptimizeTools = {
         }
       }
 
-      textParts.push('\n💡 Tip: Use coordinate grid lines on the screenshot to identify element positions. Use accessibility_element_at to inspect specific coordinates.');
+      textParts.push('\n💡 Tip: Use coordinate grid lines on the screenshot to identify element positions. IMPORTANT: When estimating Y coordinates from the screenshot, aim for the vertical CENTER or slightly BELOW center of the target element — visual perception tends to bias upward by a few pixels. Use accessibility_element_at to inspect specific coordinates for precision.');
 
       content.push({ type: 'text', text: textParts.join('\n') });
 
@@ -178,7 +178,7 @@ export const aiOptimizeTools = {
         const pos = m.position ? `@(${Math.round(m.position.x)},${Math.round(m.position.y)})` : '';
         const size = m.size ? `${Math.round(m.size.width)}x${Math.round(m.size.height)}` : '';
         const center = m.position && m.size
-          ? `center=(${Math.round(m.position.x + m.size.width / 2)},${Math.round(m.position.y + m.size.height / 2)})`
+          ? `center=(${Math.round(m.position.x + m.size.width / 2)},${Math.round(m.position.y + m.size.height / 2) + 4})`
           : '';
         return `${i + 1}. [${m.role}] "${m.title || m.value || m.description || ''}" ${pos} ${size} ${center}`;
       });
@@ -366,7 +366,9 @@ if let data = try? JSONSerialization.data(withJSONObject: output, options: []),
 
           if (isInteractive || hasContent) {
             const cx = Math.round(node.position.x + node.size.width / 2);
-            const cy = Math.round(node.position.y + node.size.height / 2);
+            // +4 compensates for AI vision model's systematic upward bias when
+            // determining click targets from screenshots
+            const cy = Math.round(node.position.y + node.size.height / 2) + 4;
             // Filter off-screen and duplicates
             if (cx > 0 && cy > 0 && cx < 3000 && cy < 2000) {
               elements.push({
@@ -817,7 +819,8 @@ function formatCompactTree(node: any, depth: number): string {
 
   if (node.position && node.size) {
     const cx = Math.round(node.position.x + node.size.width / 2);
-    const cy = Math.round(node.position.y + node.size.height / 2);
+    // +4 compensates for AI vision model's systematic upward bias
+    const cy = Math.round(node.position.y + node.size.height / 2) + 4;
     line += ` center=(${cx},${cy})`;
   }
 

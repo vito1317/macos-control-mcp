@@ -340,7 +340,7 @@ class TypeTextAnimation: AnimationItem {
         // Draw everything to the RIGHT and BELOW the anchor so the animation
         // visually appears at (or just below) the text insertion point.
         let anchorX = position.x + 4   // slight right offset from cursor
-        let anchorY = position.y + 2   // slight down offset from cursor
+        let anchorY = position.y + 14  // offset down to align with text baseline in field
 
         // Background pill
         let font = NSFont.systemFont(ofSize: 14, weight: .medium)

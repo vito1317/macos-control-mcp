@@ -57,7 +57,7 @@ async function getScaleFactor(): Promise<number> {
 
 export const screenshotTools = {
   screenshot: {
-    description: `Take a screenshot of the entire screen or a specific region. Returns the image optimized for AI analysis. Options include coordinate grid overlay to help identify element positions, compression for faster transfer, and region cropping.`,
+    description: `Take a screenshot of the entire screen or a specific region. Returns the image optimized for AI analysis. Options include coordinate grid overlay to help identify element positions, compression for faster transfer, and region cropping. NOTE: When reading element positions from the screenshot, aim for the vertical center or slightly below center of the target — AI visual perception tends to estimate Y coordinates a few pixels too high.`,
     inputSchema: z.object({
       region: z.object({
         x: z.number(),
@@ -120,7 +120,7 @@ export const screenshotTools = {
           },
           {
             type: 'text' as const,
-            text: `Screenshot captured: ${sizeInfo}${showGrid ? ` | Grid: ${gridSpacing}px spacing` : ''}`,
+            text: `Screenshot captured: ${sizeInfo}${showGrid ? ` | Grid: ${gridSpacing}px spacing (logical coordinates). IMPORTANT: When reading coordinates from the grid, aim for the vertical CENTER or slightly BELOW center of target elements — visual perception tends to bias upward by a few pixels.` : ''}`,
           },
         ],
       };
