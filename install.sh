@@ -169,14 +169,58 @@ setup_chrome() {
     echo ""
     echo -e "${BLUE}[5/5] Configuring Chrome for web element scanning...${NC}"
 
-    # Enable "Allow JavaScript from Apple Events" via defaults
-    # This allows ai_screen_elements to scan web page content inside Chrome
-    if [ -d "/Applications/Google Chrome.app" ]; then
-        defaults write com.google.Chrome AllowJavaScriptAppleEvents -bool true 2>/dev/null
-        echo -e "${GREEN}[OK]${NC} Chrome: Allow JavaScript from Apple Events enabled"
-        echo -e "  ${YELLOW}NOTE: If Chrome is running, restart it for this setting to take effect.${NC}"
-    else
+    if [ ! -d "/Applications/Google Chrome.app" ]; then
         echo -e "${YELLOW}[SKIP]${NC} Google Chrome not found — web element scanning will use CDP fallback"
+        return
+    fi
+
+    # Enable "Allow JavaScript from Apple Events" by writing directly into
+    # Chrome's Preferences JSON for each profile. This lets ai_screen_elements
+    # scan web page content inside Chrome without --remote-debugging-port.
+    CHROME_DIR="$HOME/Library/Application Support/Google/Chrome"
+    CHROME_CONFIGURED=false
+
+    if [ -d "$CHROME_DIR" ]; then
+        # Find all profile directories (Default, Profile 1, Profile 2, etc.)
+        for PROFILE_DIR in "$CHROME_DIR"/Default "$CHROME_DIR"/Profile\ *; do
+            [ -d "$PROFILE_DIR" ] || continue
+            PREFS_FILE="$PROFILE_DIR/Preferences"
+            [ -f "$PREFS_FILE" ] || continue
+
+            python3 -c "
+import json, sys
+
+prefs_path = '''$PREFS_FILE'''
+try:
+    with open(prefs_path, 'r') as f:
+        prefs = json.load(f)
+except:
+    sys.exit(1)
+
+# Set browser.allow_javascript_apple_events = true
+browser = prefs.setdefault('browser', {})
+browser['allow_javascript_apple_events'] = True
+
+with open(prefs_path, 'w') as f:
+    json.dump(prefs, f, separators=(',', ':'))
+" 2>/dev/null
+
+            if [ $? -eq 0 ]; then
+                PROFILE_NAME=$(basename "$PROFILE_DIR")
+                echo -e "  ${GREEN}✓${NC} Chrome profile '$PROFILE_NAME': AppleScript JS enabled"
+                CHROME_CONFIGURED=true
+            fi
+        done
+    fi
+
+    if [ "$CHROME_CONFIGURED" = true ]; then
+        echo -e "${GREEN}[OK]${NC} Chrome configured for web element scanning"
+        # Check if Chrome is currently running
+        if pgrep -q "Google Chrome"; then
+            echo -e "  ${YELLOW}NOTE: Chrome is running. Restart Chrome for the setting to take effect.${NC}"
+        fi
+    else
+        echo -e "${YELLOW}[INFO]${NC} Chrome profiles not found — will configure on first use"
     fi
 }
 
@@ -228,8 +272,8 @@ summary() {
     echo -e "  ${YELLOW}NOTE: Grant Accessibility permissions in:${NC}"
     echo -e "  ${YELLOW}System Settings > Privacy & Security > Accessibility${NC}"
     echo ""
-    echo -e "  ${YELLOW}Chrome web scanning: Already configured.${NC}"
-    echo -e "  ${YELLOW}If not working, check: Chrome > View > Developer > Allow JavaScript from Apple Events${NC}"
+    echo -e "  ${YELLOW}Chrome web scanning: Configured automatically.${NC}"
+    echo -e "  ${YELLOW}If Chrome was running during install, restart it once.${NC}"
     echo ""
 }
 
