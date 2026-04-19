@@ -183,28 +183,84 @@ async function tryGetWebElements(cdpPort: number = 9222): Promise<WebElementsRes
   } catch { /* CDP failed, try AppleScript */ }
 
   // Strategy 2: AppleScript — works with normal Chrome (no CDP needed)
-  // Requires: Chrome menu > View > Developer > "Allow JavaScript from Apple Events" ✓
-  try {
-    const appleScriptResult = await new Promise<string>((resolve, reject) => {
-      // AppleScript to execute JS in Chrome's active tab
-      const script = `
-        tell application "Google Chrome"
-          set jsResult to execute front window's active tab javascript "${WEB_ELEMENTS_JS.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"
-          return jsResult
-        end tell
-      `;
-      execFile('/usr/bin/osascript', ['-e', script], { timeout: 8000 }, (error, stdout) => {
-        if (error) reject(error);
-        else resolve(stdout.trim());
-      });
-    });
+  // If "Allow JavaScript from Apple Events" is off, auto-enable it via menu toggle and retry.
+  const escapedJS = WEB_ELEMENTS_JS.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  const chromeJsScript = `tell application "Google Chrome"\nset jsResult to execute front window's active tab javascript "${escapedJS}"\nreturn jsResult\nend tell`;
 
-    const parsed = JSON.parse(appleScriptResult);
+  const tryAppleScript = () => new Promise<string>((resolve, reject) => {
+    execFile('/usr/bin/osascript', ['-e', chromeJsScript], { timeout: 8000 }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve(stdout.trim());
+    });
+  });
+
+  // First attempt
+  try {
+    const result = await tryAppleScript();
+    const parsed = JSON.parse(result);
     if (parsed.success) {
       const offset = await getChromeWindowOffset();
       return { elements: parsed.elements, title: parsed.title, url: parsed.url, windowOffsetX: offset.x, windowOffsetY: offset.y };
     }
-  } catch { /* AppleScript also failed */ }
+  } catch (err: any) {
+    // If AppleScript JS is disabled, try to auto-enable it via Chrome's menu
+    if (err?.message?.includes('AppleScript') || err?.message?.includes('JavaScript')) {
+      try {
+        // Auto-enable: View > Developer > Allow JavaScript from Apple Events
+        // We detect the correct menu item names using the accessibility tree
+        await new Promise<void>((resolve, reject) => {
+          const enableScript = `
+            tell application "Google Chrome" to activate
+            delay 0.3
+            tell application "System Events"
+              tell process "Google Chrome"
+                -- Find the Developer submenu (various localized names)
+                set viewMenu to menu 1 of menu bar item 5 of menu bar 1
+                set devMenuItem to missing value
+                repeat with mi in menu items of viewMenu
+                  try
+                    if (menu 1 of mi) exists then
+                      -- This menu item has a submenu — check if it contains JS/AppleScript toggle
+                      set subItems to name of every menu item of menu 1 of mi
+                      set subItemsStr to subItems as text
+                      if subItemsStr contains "JavaScript" then
+                        set devMenuItem to mi
+                        exit repeat
+                      end if
+                    end if
+                  end try
+                end repeat
+                if devMenuItem is not missing value then
+                  -- Find and click the JavaScript/Apple Events toggle in the submenu
+                  set devMenu to menu 1 of devMenuItem
+                  repeat with si in menu items of devMenu
+                    set siName to name of si
+                    if siName contains "JavaScript" and siName contains "Apple" then
+                      click si
+                      exit repeat
+                    end if
+                  end repeat
+                end if
+              end tell
+            end tell
+          `;
+          execFile('/usr/bin/osascript', ['-e', enableScript], { timeout: 8000 }, (error2) => {
+            if (error2) reject(error2);
+            else resolve();
+          });
+        });
+
+        // Wait for setting to take effect, then retry
+        await new Promise(r => setTimeout(r, 1000));
+        const result2 = await tryAppleScript();
+        const parsed2 = JSON.parse(result2);
+        if (parsed2.success) {
+          const offset = await getChromeWindowOffset();
+          return { elements: parsed2.elements, title: parsed2.title, url: parsed2.url, windowOffsetX: offset.x, windowOffsetY: offset.y };
+        }
+      } catch { /* auto-enable failed */ }
+    }
+  }
 
   return null;
 }
@@ -591,6 +647,8 @@ if let data = try? JSONSerialization.data(withJSONObject: output, options: []),
             }
           }
           webElementsNote = ` (includes ${webResult.elements.length} web page elements via CDP)`;
+        } else {
+          webElementsNote = ' (web page elements unavailable — enable Chrome > View > Developer > Allow JavaScript from Apple Events)';
         }
       }
 

@@ -174,53 +174,48 @@ setup_chrome() {
         return
     fi
 
-    # Enable "Allow JavaScript from Apple Events" by writing directly into
-    # Chrome's Preferences JSON for each profile. This lets ai_screen_elements
-    # scan web page content inside Chrome without --remote-debugging-port.
-    CHROME_DIR="$HOME/Library/Application Support/Google/Chrome"
-    CHROME_CONFIGURED=false
+    # Chrome requires a manual one-time toggle for "Allow JavaScript from Apple Events".
+    # This security setting cannot be enabled programmatically (Chrome ignores
+    # defaults write, Preferences JSON edits, and System Events menu clicks).
+    # We guide the user through the process interactively.
 
-    if [ -d "$CHROME_DIR" ]; then
-        # Find all profile directories (Default, Profile 1, Profile 2, etc.)
-        for PROFILE_DIR in "$CHROME_DIR"/Default "$CHROME_DIR"/Profile\ *; do
-            [ -d "$PROFILE_DIR" ] || continue
-            PREFS_FILE="$PROFILE_DIR/Preferences"
-            [ -f "$PREFS_FILE" ] || continue
+    echo ""
+    echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "  ${YELLOW}  Chrome Web Scanning Setup (one-time)${NC}"
+    echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "  To let AI detect web page elements (inputs, buttons, links)"
+    echo -e "  inside Chrome, enable this Chrome setting:"
+    echo ""
+    echo -e "  ${BLUE}Chrome menu > 顯示方式/View > 開發人員選項/Developer${NC}"
+    echo -e "  ${BLUE}  > 允許 Apple 事件的 JavaScript / Allow JavaScript from Apple Events${NC}"
+    echo ""
 
-            python3 -c "
-import json, sys
-
-prefs_path = '''$PREFS_FILE'''
-try:
-    with open(prefs_path, 'r') as f:
-        prefs = json.load(f)
-except:
-    sys.exit(1)
-
-# Set browser.allow_javascript_apple_events = true
-browser = prefs.setdefault('browser', {})
-browser['allow_javascript_apple_events'] = True
-
-with open(prefs_path, 'w') as f:
-    json.dump(prefs, f, separators=(',', ':'))
-" 2>/dev/null
-
-            if [ $? -eq 0 ]; then
-                PROFILE_NAME=$(basename "$PROFILE_DIR")
-                echo -e "  ${GREEN}✓${NC} Chrome profile '$PROFILE_NAME': AppleScript JS enabled"
-                CHROME_CONFIGURED=true
-            fi
-        done
+    # Open Chrome so the user can do it right now
+    if ! pgrep -q "Google Chrome"; then
+        echo -e "  Opening Chrome..."
+        open -a "Google Chrome" 2>/dev/null
+        sleep 3
     fi
 
-    if [ "$CHROME_CONFIGURED" = true ]; then
-        echo -e "${GREEN}[OK]${NC} Chrome configured for web element scanning"
-        # Check if Chrome is currently running
-        if pgrep -q "Google Chrome"; then
-            echo -e "  ${YELLOW}NOTE: Chrome is running. Restart Chrome for the setting to take effect.${NC}"
-        fi
+    # Try to verify if the setting is already on
+    ALREADY_ENABLED=$(osascript -e 'tell application "Google Chrome" to execute front window'\''s active tab javascript "true"' 2>&1)
+    if echo "$ALREADY_ENABLED" | grep -q "true"; then
+        echo -e "  ${GREEN}✓ Already enabled!${NC}"
+        return
+    fi
+
+    echo -e "  Please enable it now, then press ${GREEN}Enter${NC} to continue..."
+    echo -e "  (or press Enter to skip — you can enable it later)"
+    read -r
+
+    # Verify
+    VERIFY=$(osascript -e 'tell application "Google Chrome" to execute front window'\''s active tab javascript "true"' 2>&1)
+    if echo "$VERIFY" | grep -q "true"; then
+        echo -e "  ${GREEN}[OK]${NC} Chrome web scanning is enabled!"
     else
-        echo -e "${YELLOW}[INFO]${NC} Chrome profiles not found — will configure on first use"
+        echo -e "  ${YELLOW}[SKIP]${NC} Not enabled yet. You can enable it anytime from Chrome's menu."
+        echo -e "  ${YELLOW}       ai_screen_elements will still work for native UI elements.${NC}"
     fi
 }
 
@@ -272,8 +267,8 @@ summary() {
     echo -e "  ${YELLOW}NOTE: Grant Accessibility permissions in:${NC}"
     echo -e "  ${YELLOW}System Settings > Privacy & Security > Accessibility${NC}"
     echo ""
-    echo -e "  ${YELLOW}Chrome web scanning: Configured automatically.${NC}"
-    echo -e "  ${YELLOW}If Chrome was running during install, restart it once.${NC}"
+    echo -e "  ${YELLOW}Chrome web scanning: Enable in Chrome > View > Developer${NC}"
+    echo -e "  ${YELLOW}  > Allow JavaScript from Apple Events (one-time toggle)${NC}"
     echo ""
 }
 
