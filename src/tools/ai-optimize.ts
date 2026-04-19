@@ -42,7 +42,7 @@ async function getScaleFactor(): Promise<number> {
 
 export const aiOptimizeTools = {
   ai_screen_context: {
-    description: `[AI-Optimized] Capture a comprehensive snapshot of the current screen state for AI analysis. Returns: 1) Screenshot with coordinate grid overlay, 2) Accessibility tree of the frontmost app (interactive elements with positions), 3) Current mouse position, 4) Frontmost app info. This is the recommended "look at screen" tool for AI agents.`,
+    description: `[AI-Optimized] Capture a comprehensive snapshot of the current screen state for AI analysis. Returns: 1) Screenshot with coordinate grid overlay, 2) Accessibility tree of the frontmost app (interactive elements with positions), 3) Current mouse position, 4) Frontmost app info. Good for understanding screen context. For CLICKING elements, prefer ai_screen_elements which gives precise coordinates.`,
     inputSchema: z.object({
       gridSpacing: z.number().optional().describe('Coordinate grid spacing in pixels (default: 100)'),
       maxDepth: z.number().min(1).max(5).optional().describe('Accessibility tree depth (default: 3)'),
@@ -306,7 +306,7 @@ if let data = try? JSONSerialization.data(withJSONObject: output, options: []),
   },
 
   ai_screen_elements: {
-    description: `[AI-Optimized] Screenshot with ALL interactive UI elements auto-detected and numbered. Each element's center coordinate is labeled directly on the screenshot AND listed in text. Returns: 1) Annotated screenshot with numbered markers on every button/field/link, 2) Element list with [number] role "title" center=(x,y) for precise clicking. This is the BEST tool for AI to understand clickable targets.`,
+    description: `🎯 PREFERRED — Use this FIRST when you need to click or interact with UI elements. Auto-detects ALL interactive elements (buttons, fields, links, etc.) with precise center coordinates from the accessibility tree. Returns: 1) Annotated screenshot with numbered markers on every element, 2) Element list with [number] role "title" center=(x,y). These coordinates are MORE ACCURATE than manually reading positions from a plain screenshot. Always prefer this over screenshot+manual coordinate guessing.`,
     inputSchema: z.object({
       pid: z.number().optional().describe('Process ID of app to analyze (omit for frontmost app)'),
       maxWidth: z.number().optional().describe('Max screenshot width (default: 1440)'),

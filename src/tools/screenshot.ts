@@ -57,7 +57,7 @@ async function getScaleFactor(): Promise<number> {
 
 export const screenshotTools = {
   screenshot: {
-    description: `Take a screenshot of the entire screen or a specific region. Returns the image optimized for AI analysis. Options include coordinate grid overlay to help identify element positions, compression for faster transfer, and region cropping. NOTE: When reading element positions from the screenshot, aim for the vertical center or slightly below center of the target — AI visual perception tends to estimate Y coordinates a few pixels too high.`,
+    description: `Take a screenshot of the entire screen or a specific region. Returns the image optimized for AI analysis. Options include coordinate grid overlay, compression, and region cropping. ⚠️ PREFER ai_screen_elements over this tool when you need to find clickable elements — it auto-detects ALL interactive elements with precise coordinates. Use screenshot only when you need a raw visual overview or to verify results. If you must estimate positions from the screenshot, aim for the vertical center or slightly below center of targets (visual perception biases Y upward).`,
     inputSchema: z.object({
       region: z.object({
         x: z.number(),
