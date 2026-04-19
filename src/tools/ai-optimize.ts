@@ -40,6 +40,157 @@ async function getScaleFactor(): Promise<number> {
   }
 }
 
+/**
+ * Try to scan web page elements via Chrome DevTools Protocol.
+ * Returns null if CDP is not available (Chrome not running with --remote-debugging-port).
+ * Non-throwing — silently returns null on any failure.
+ */
+async function tryGetWebElements(cdpPort: number = 9222): Promise<{
+  elements: Array<{ kind: string; label: string; cx: number; cy: number; w: number; h: number; tag: string; href?: string; type?: string }>;
+  title: string;
+  url: string;
+  windowOffsetX: number;
+  windowOffsetY: number;
+} | null> {
+  try {
+    const http = await import('node:http');
+
+    // Quick check if CDP is available (500ms timeout)
+    const cdpAvailable = await new Promise<boolean>((resolve) => {
+      const req = http.get(`http://127.0.0.1:${cdpPort}/json/version`, (res) => {
+        let d = '';
+        res.on('data', (c: Buffer) => d += c);
+        res.on('end', () => resolve(d.includes('Chrome')));
+      });
+      req.on('error', () => resolve(false));
+      req.setTimeout(500, () => { req.destroy(); resolve(false); });
+    });
+
+    if (!cdpAvailable) return null;
+
+    // Get tabs
+    const tabsJson = await new Promise<string>((resolve, reject) => {
+      http.get(`http://127.0.0.1:${cdpPort}/json`, (res) => {
+        let data = '';
+        res.on('data', (chunk: Buffer) => data += chunk);
+        res.on('end', () => resolve(data));
+      }).on('error', reject);
+    });
+
+    const tabs = JSON.parse(tabsJson).filter((t: any) => t.type === 'page');
+    if (tabs.length === 0) return null;
+
+    const wsUrl = tabs[0].webSocketDebuggerUrl;
+    if (!wsUrl) return null;
+
+    // Inject JS to get all interactive elements
+    const jsCode = `
+(function() {
+  const selectors = [
+    'a[href]', 'button', 'input', 'select', 'textarea',
+    '[role="button"]', '[role="link"]', '[role="tab"]', '[role="menuitem"]',
+    '[role="checkbox"]', '[role="radio"]', '[role="switch"]',
+    '[role="combobox"]', '[role="listbox"]', '[role="option"]',
+    '[role="slider"]', '[role="textbox"]',
+    '[onclick]', '[tabindex]', 'summary', 'details', 'label[for]',
+    '[contenteditable="true"]',
+  ];
+  const allElements = document.querySelectorAll(selectors.join(','));
+  const results = [];
+  const seen = new Set();
+  for (const el of allElements) {
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 3 || rect.height < 3) continue;
+    if (rect.bottom < 0 || rect.top > window.innerHeight ||
+        rect.right < 0 || rect.left > window.innerWidth) continue;
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
+    const key = Math.round(rect.left) + ',' + Math.round(rect.top) + ',' + Math.round(rect.width);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const tag = el.tagName.toLowerCase();
+    const type = el.getAttribute('type') || '';
+    const role = el.getAttribute('role') || '';
+    const text = (el.textContent || '').trim().substring(0, 60);
+    const ariaLabel = el.getAttribute('aria-label') || '';
+    const placeholder = el.getAttribute('placeholder') || '';
+    const href = el.getAttribute('href') || '';
+    const name = el.getAttribute('name') || '';
+    const id = el.getAttribute('id') || '';
+    let kind = tag;
+    if (tag === 'input') kind = 'input[' + (type || 'text') + ']';
+    if (role) kind = role;
+    if (tag === 'a') kind = 'link';
+    const label = ariaLabel || placeholder || text || name || id || href?.substring(0, 40) || '(no label)';
+    results.push({
+      kind, label: label.substring(0, 60),
+      cx: Math.round(rect.left + rect.width / 2),
+      cy: Math.round(rect.top + rect.height / 2),
+      w: Math.round(rect.width), h: Math.round(rect.height),
+      tag, ...(href ? { href: href.substring(0, 80) } : {}), ...(type ? { type } : {}),
+    });
+  }
+  return JSON.stringify({
+    success: true, url: location.href, title: document.title,
+    viewport: { width: window.innerWidth, height: window.innerHeight },
+    count: results.length, elements: results
+  });
+})()`;
+
+    const result = await new Promise<string>((resolve, reject) => {
+      const ws = new WebSocket(wsUrl);
+      const timeout = setTimeout(() => { ws.close(); reject(new Error('CDP timeout')); }, 5000);
+      ws.on('open', () => {
+        ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: jsCode, returnByValue: true } }));
+      });
+      ws.on('message', (data: WebSocket.Data) => {
+        clearTimeout(timeout);
+        const resp = JSON.parse(data.toString());
+        if (resp.id === 1) {
+          ws.close();
+          const val = resp.result?.result?.value;
+          if (val) resolve(val);
+          else reject(new Error('JS eval failed'));
+        }
+      });
+      ws.on('error', (err: Error) => { clearTimeout(timeout); reject(err); });
+    });
+
+    const parsed = JSON.parse(result);
+    if (!parsed.success) return null;
+
+    // Get Chrome window bounds for screen coordinate conversion
+    let windowOffsetX = 0;
+    let windowOffsetY = 0;
+    try {
+      const boundsResult = await new Promise<string>((resolve, reject) => {
+        execFile('/usr/bin/osascript', ['-e', 'tell application "Google Chrome" to get bounds of front window'], { timeout: 3000 }, (error, stdout) => {
+          if (error) reject(error);
+          else resolve(stdout.trim());
+        });
+      });
+      const bounds = boundsResult.split(',').map(s => parseInt(s.trim()));
+      if (bounds.length >= 2) {
+        windowOffsetX = bounds[0];
+        windowOffsetY = bounds[1] + 90; // Chrome toolbar+tabs height
+      }
+    } catch {
+      windowOffsetX = 0;
+      windowOffsetY = 120;
+    }
+
+    return {
+      elements: parsed.elements,
+      title: parsed.title,
+      url: parsed.url,
+      windowOffsetX,
+      windowOffsetY,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export const aiOptimizeTools = {
   ai_screen_context: {
     description: `[AI-Optimized] Capture a comprehensive snapshot of the current screen state for AI analysis. Returns: 1) Screenshot with coordinate grid overlay, 2) Accessibility tree of the frontmost app (interactive elements with positions), 3) Current mouse position, 4) Frontmost app info. Good for understanding screen context. For CLICKING elements, prefer ai_screen_elements which gives precise coordinates.`,
@@ -306,7 +457,7 @@ if let data = try? JSONSerialization.data(withJSONObject: output, options: []),
   },
 
   ai_screen_elements: {
-    description: `🎯 PREFERRED — Use this FIRST when you need to click or interact with UI elements. Auto-detects ALL interactive elements (buttons, fields, links, etc.) with precise center coordinates from the accessibility tree. Returns: 1) Annotated screenshot with numbered markers on every element, 2) Element list with [number] role "title" center=(x,y). These coordinates are MORE ACCURATE than manually reading positions from a plain screenshot. Always prefer this over screenshot+manual coordinate guessing.`,
+    description: `🎯 PREFERRED — Use this FIRST when you need to click or interact with UI elements. Auto-detects ALL interactive elements (buttons, fields, links, etc.) with precise center coordinates. Uses accessibility tree for native apps, AND automatically scans web page elements via Chrome DevTools Protocol when a browser is frontmost. Returns: 1) Annotated screenshot with numbered markers on every element, 2) Element list with [number] role "title" center=(x,y). Web elements are prefixed with "web:" (e.g. web:input, web:button, web:link). These coordinates are MORE ACCURATE than manually reading positions from a plain screenshot. Always prefer this over screenshot+manual coordinate guessing.`,
     inputSchema: z.object({
       pid: z.number().optional().describe('Process ID of app to analyze (omit for frontmost app)'),
       maxWidth: z.number().optional().describe('Max screenshot width (default: 1440)'),
@@ -393,6 +544,38 @@ if let data = try? JSONSerialization.data(withJSONObject: output, options: []),
 
       collectElements(treeResult.tree);
 
+      // 2.5. If frontmost app is a browser, also scan web page elements via CDP
+      const appName = (String(treeResult.app || '')).toLowerCase();
+      const isBrowser = appName.includes('chrome') || appName.includes('chromium') ||
+                        appName.includes('brave') || appName.includes('edge') ||
+                        appName.includes('arc') || appName.includes('opera');
+      let webElementsNote = '';
+
+      if (isBrowser) {
+        const webResult = await tryGetWebElements();
+        if (webResult && webResult.elements.length > 0) {
+          // Add web elements with screen coordinates, continuing the index sequence
+          for (const webEl of webResult.elements) {
+            const screenX = webEl.cx + webResult.windowOffsetX;
+            const screenY = webEl.cy + webResult.windowOffsetY;
+            if (screenX > 0 && screenY > 0 && screenX < 3000 && screenY < 2000) {
+              elements.push({
+                index: elements.length + 1,
+                role: `web:${webEl.kind}`,
+                title: webEl.label,
+                cx: screenX,
+                cy: screenY,
+                x: webEl.cx + webResult.windowOffsetX - Math.round(webEl.w / 2),
+                y: webEl.cy + webResult.windowOffsetY - Math.round(webEl.h / 2),
+                width: webEl.w,
+                height: webEl.h,
+              });
+            }
+          }
+          webElementsNote = ` (includes ${webResult.elements.length} web page elements via CDP)`;
+        }
+      }
+
       // 3. Annotate screenshot with numbered markers
       const colors = ['#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#007AFF', '#5856D6', '#AF52DE', '#FF2D55'];
       const annotationPoints = elements.map((el, i) => ({
@@ -411,7 +594,7 @@ if let data = try? JSONSerialization.data(withJSONObject: output, options: []),
 
       // 4. Build element list text
       const textParts: string[] = [];
-      textParts.push(`=== Screen Elements (${elements.length} detected) ===`);
+      textParts.push(`=== Screen Elements (${elements.length} detected${webElementsNote}) ===`);
       textParts.push(`App: ${treeResult.app || 'frontmost'}\n`);
 
       for (const el of elements) {
