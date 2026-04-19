@@ -40,51 +40,8 @@ async function getScaleFactor(): Promise<number> {
   }
 }
 
-/**
- * Try to scan web page elements via Chrome DevTools Protocol.
- * Returns null if CDP is not available (Chrome not running with --remote-debugging-port).
- * Non-throwing — silently returns null on any failure.
- */
-async function tryGetWebElements(cdpPort: number = 9222): Promise<{
-  elements: Array<{ kind: string; label: string; cx: number; cy: number; w: number; h: number; tag: string; href?: string; type?: string }>;
-  title: string;
-  url: string;
-  windowOffsetX: number;
-  windowOffsetY: number;
-} | null> {
-  try {
-    const http = await import('node:http');
-
-    // Quick check if CDP is available (500ms timeout)
-    const cdpAvailable = await new Promise<boolean>((resolve) => {
-      const req = http.get(`http://127.0.0.1:${cdpPort}/json/version`, (res) => {
-        let d = '';
-        res.on('data', (c: Buffer) => d += c);
-        res.on('end', () => resolve(d.includes('Chrome')));
-      });
-      req.on('error', () => resolve(false));
-      req.setTimeout(500, () => { req.destroy(); resolve(false); });
-    });
-
-    if (!cdpAvailable) return null;
-
-    // Get tabs
-    const tabsJson = await new Promise<string>((resolve, reject) => {
-      http.get(`http://127.0.0.1:${cdpPort}/json`, (res) => {
-        let data = '';
-        res.on('data', (chunk: Buffer) => data += chunk);
-        res.on('end', () => resolve(data));
-      }).on('error', reject);
-    });
-
-    const tabs = JSON.parse(tabsJson).filter((t: any) => t.type === 'page');
-    if (tabs.length === 0) return null;
-
-    const wsUrl = tabs[0].webSocketDebuggerUrl;
-    if (!wsUrl) return null;
-
-    // Inject JS to get all interactive elements
-    const jsCode = `
+/** Shared JS code injected into Chrome to scan all interactive web elements */
+const WEB_ELEMENTS_JS = `
 (function() {
   const selectors = [
     'a[href]', 'button', 'input', 'select', 'textarea',
@@ -95,39 +52,39 @@ async function tryGetWebElements(cdpPort: number = 9222): Promise<{
     '[onclick]', '[tabindex]', 'summary', 'details', 'label[for]',
     '[contenteditable="true"]',
   ];
-  const allElements = document.querySelectorAll(selectors.join(','));
-  const results = [];
-  const seen = new Set();
-  for (const el of allElements) {
-    const rect = el.getBoundingClientRect();
+  var allElements = document.querySelectorAll(selectors.join(','));
+  var results = [];
+  var seen = new Set();
+  for (var el of allElements) {
+    var rect = el.getBoundingClientRect();
     if (rect.width < 3 || rect.height < 3) continue;
     if (rect.bottom < 0 || rect.top > window.innerHeight ||
         rect.right < 0 || rect.left > window.innerWidth) continue;
-    const style = window.getComputedStyle(el);
+    var style = window.getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
-    const key = Math.round(rect.left) + ',' + Math.round(rect.top) + ',' + Math.round(rect.width);
+    var key = Math.round(rect.left) + ',' + Math.round(rect.top) + ',' + Math.round(rect.width);
     if (seen.has(key)) continue;
     seen.add(key);
-    const tag = el.tagName.toLowerCase();
-    const type = el.getAttribute('type') || '';
-    const role = el.getAttribute('role') || '';
-    const text = (el.textContent || '').trim().substring(0, 60);
-    const ariaLabel = el.getAttribute('aria-label') || '';
-    const placeholder = el.getAttribute('placeholder') || '';
-    const href = el.getAttribute('href') || '';
-    const name = el.getAttribute('name') || '';
-    const id = el.getAttribute('id') || '';
-    let kind = tag;
+    var tag = el.tagName.toLowerCase();
+    var type = el.getAttribute('type') || '';
+    var role = el.getAttribute('role') || '';
+    var text = (el.textContent || '').trim().substring(0, 60);
+    var ariaLabel = el.getAttribute('aria-label') || '';
+    var placeholder = el.getAttribute('placeholder') || '';
+    var href = el.getAttribute('href') || '';
+    var name = el.getAttribute('name') || '';
+    var id = el.getAttribute('id') || '';
+    var kind = tag;
     if (tag === 'input') kind = 'input[' + (type || 'text') + ']';
     if (role) kind = role;
     if (tag === 'a') kind = 'link';
-    const label = ariaLabel || placeholder || text || name || id || href?.substring(0, 40) || '(no label)';
+    var label = ariaLabel || placeholder || text || name || id || (href ? href.substring(0, 40) : '') || '(no label)';
     results.push({
-      kind, label: label.substring(0, 60),
+      kind: kind, label: label.substring(0, 60),
       cx: Math.round(rect.left + rect.width / 2),
       cy: Math.round(rect.top + rect.height / 2),
       w: Math.round(rect.width), h: Math.round(rect.height),
-      tag, ...(href ? { href: href.substring(0, 80) } : {}), ...(type ? { type } : {}),
+      tag: tag, href: href ? href.substring(0, 80) : undefined, type: type || undefined,
     });
   }
   return JSON.stringify({
@@ -137,58 +94,119 @@ async function tryGetWebElements(cdpPort: number = 9222): Promise<{
   });
 })()`;
 
-    const result = await new Promise<string>((resolve, reject) => {
-      const ws = new WebSocket(wsUrl);
-      const timeout = setTimeout(() => { ws.close(); reject(new Error('CDP timeout')); }, 5000);
-      ws.on('open', () => {
-        ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: jsCode, returnByValue: true } }));
+type WebElementsResult = {
+  elements: Array<{ kind: string; label: string; cx: number; cy: number; w: number; h: number; tag: string; href?: string; type?: string }>;
+  title: string;
+  url: string;
+  windowOffsetX: number;
+  windowOffsetY: number;
+};
+
+/**
+ * Get Chrome window bounds for viewport→screen coordinate conversion.
+ */
+async function getChromeWindowOffset(): Promise<{ x: number; y: number }> {
+  try {
+    const boundsResult = await new Promise<string>((resolve, reject) => {
+      execFile('/usr/bin/osascript', ['-e', 'tell application "Google Chrome" to get bounds of front window'], { timeout: 3000 }, (error, stdout) => {
+        if (error) reject(error);
+        else resolve(stdout.trim());
       });
-      ws.on('message', (data: WebSocket.Data) => {
-        clearTimeout(timeout);
-        const resp = JSON.parse(data.toString());
-        if (resp.id === 1) {
-          ws.close();
-          const val = resp.result?.result?.value;
-          if (val) resolve(val);
-          else reject(new Error('JS eval failed'));
-        }
+    });
+    const bounds = boundsResult.split(',').map(s => parseInt(s.trim()));
+    if (bounds.length >= 2) {
+      return { x: bounds[0], y: bounds[1] + 90 }; // +90 for Chrome toolbar+tabs
+    }
+  } catch { /* fall through */ }
+  return { x: 0, y: 120 };
+}
+
+/**
+ * Try to scan web page elements. Attempts two strategies:
+ * 1. CDP (Chrome DevTools Protocol) — requires --remote-debugging-port
+ * 2. AppleScript — works with normal Chrome, requires "Allow JavaScript from Apple Events"
+ * Returns null if both methods fail.
+ */
+async function tryGetWebElements(cdpPort: number = 9222): Promise<WebElementsResult | null> {
+  // Strategy 1: Try CDP first (faster, more reliable when available)
+  try {
+    const http = await import('node:http');
+    const cdpAvailable = await new Promise<boolean>((resolve) => {
+      const req = http.get(`http://127.0.0.1:${cdpPort}/json/version`, (res) => {
+        let d = '';
+        res.on('data', (c: Buffer) => d += c);
+        res.on('end', () => resolve(d.includes('Chrome')));
       });
-      ws.on('error', (err: Error) => { clearTimeout(timeout); reject(err); });
+      req.on('error', () => resolve(false));
+      req.setTimeout(500, () => { req.destroy(); resolve(false); });
     });
 
-    const parsed = JSON.parse(result);
-    if (!parsed.success) return null;
-
-    // Get Chrome window bounds for screen coordinate conversion
-    let windowOffsetX = 0;
-    let windowOffsetY = 0;
-    try {
-      const boundsResult = await new Promise<string>((resolve, reject) => {
-        execFile('/usr/bin/osascript', ['-e', 'tell application "Google Chrome" to get bounds of front window'], { timeout: 3000 }, (error, stdout) => {
-          if (error) reject(error);
-          else resolve(stdout.trim());
-        });
+    if (cdpAvailable) {
+      const tabsJson = await new Promise<string>((resolve, reject) => {
+        http.get(`http://127.0.0.1:${cdpPort}/json`, (res) => {
+          let data = '';
+          res.on('data', (chunk: Buffer) => data += chunk);
+          res.on('end', () => resolve(data));
+        }).on('error', reject);
       });
-      const bounds = boundsResult.split(',').map(s => parseInt(s.trim()));
-      if (bounds.length >= 2) {
-        windowOffsetX = bounds[0];
-        windowOffsetY = bounds[1] + 90; // Chrome toolbar+tabs height
-      }
-    } catch {
-      windowOffsetX = 0;
-      windowOffsetY = 120;
-    }
 
-    return {
-      elements: parsed.elements,
-      title: parsed.title,
-      url: parsed.url,
-      windowOffsetX,
-      windowOffsetY,
-    };
-  } catch {
-    return null;
-  }
+      const tabs = JSON.parse(tabsJson).filter((t: any) => t.type === 'page');
+      const wsUrl = tabs[0]?.webSocketDebuggerUrl;
+
+      if (wsUrl) {
+        const result = await new Promise<string>((resolve, reject) => {
+          const ws = new WebSocket(wsUrl);
+          const timeout = setTimeout(() => { ws.close(); reject(new Error('CDP timeout')); }, 5000);
+          ws.on('open', () => {
+            ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: WEB_ELEMENTS_JS, returnByValue: true } }));
+          });
+          ws.on('message', (data: WebSocket.Data) => {
+            clearTimeout(timeout);
+            const resp = JSON.parse(data.toString());
+            if (resp.id === 1) {
+              ws.close();
+              const val = resp.result?.result?.value;
+              if (val) resolve(val);
+              else reject(new Error('JS eval failed'));
+            }
+          });
+          ws.on('error', (err: Error) => { clearTimeout(timeout); reject(err); });
+        });
+
+        const parsed = JSON.parse(result);
+        if (parsed.success) {
+          const offset = await getChromeWindowOffset();
+          return { elements: parsed.elements, title: parsed.title, url: parsed.url, windowOffsetX: offset.x, windowOffsetY: offset.y };
+        }
+      }
+    }
+  } catch { /* CDP failed, try AppleScript */ }
+
+  // Strategy 2: AppleScript — works with normal Chrome (no CDP needed)
+  // Requires: Chrome menu > View > Developer > "Allow JavaScript from Apple Events" ✓
+  try {
+    const appleScriptResult = await new Promise<string>((resolve, reject) => {
+      // AppleScript to execute JS in Chrome's active tab
+      const script = `
+        tell application "Google Chrome"
+          set jsResult to execute front window's active tab javascript "${WEB_ELEMENTS_JS.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"
+          return jsResult
+        end tell
+      `;
+      execFile('/usr/bin/osascript', ['-e', script], { timeout: 8000 }, (error, stdout) => {
+        if (error) reject(error);
+        else resolve(stdout.trim());
+      });
+    });
+
+    const parsed = JSON.parse(appleScriptResult);
+    if (parsed.success) {
+      const offset = await getChromeWindowOffset();
+      return { elements: parsed.elements, title: parsed.title, url: parsed.url, windowOffsetX: offset.x, windowOffsetY: offset.y };
+    }
+  } catch { /* AppleScript also failed */ }
+
+  return null;
 }
 
 export const aiOptimizeTools = {

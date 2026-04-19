@@ -164,6 +164,22 @@ print('Permissions updated')
     echo -e "${GREEN}[OK]${NC} Permissions auto-allowed in $SETTINGS_FILE"
 }
 
+# ─── Configure Chrome for web element scanning ────────────
+setup_chrome() {
+    echo ""
+    echo -e "${BLUE}[5/5] Configuring Chrome for web element scanning...${NC}"
+
+    # Enable "Allow JavaScript from Apple Events" via defaults
+    # This allows ai_screen_elements to scan web page content inside Chrome
+    if [ -d "/Applications/Google Chrome.app" ]; then
+        defaults write com.google.Chrome AllowJavaScriptAppleEvents -bool true 2>/dev/null
+        echo -e "${GREEN}[OK]${NC} Chrome: Allow JavaScript from Apple Events enabled"
+        echo -e "  ${YELLOW}NOTE: If Chrome is running, restart it for this setting to take effect.${NC}"
+    else
+        echo -e "${YELLOW}[SKIP]${NC} Google Chrome not found — web element scanning will use CDP fallback"
+    fi
+}
+
 # ─── Verify ─────────────────────────────────────────────────
 verify() {
     echo ""
@@ -212,6 +228,9 @@ summary() {
     echo -e "  ${YELLOW}NOTE: Grant Accessibility permissions in:${NC}"
     echo -e "  ${YELLOW}System Settings > Privacy & Security > Accessibility${NC}"
     echo ""
+    echo -e "  ${YELLOW}Chrome web scanning: Already configured.${NC}"
+    echo -e "  ${YELLOW}If not working, check: Chrome > View > Developer > Allow JavaScript from Apple Events${NC}"
+    echo ""
 }
 
 # ─── Main ───────────────────────────────────────────────────
@@ -221,6 +240,7 @@ main() {
     setup_repo
     build_project
     register_mcp
+    setup_chrome
     verify
     summary
 }
