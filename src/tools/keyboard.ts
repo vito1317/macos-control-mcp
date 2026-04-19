@@ -12,30 +12,33 @@ export const keyboardTools = {
       text: z.string().describe('Text to type'),
     }),
     handler: async (args: { text: string }) => {
-      // Show typing animation at the focused input field's caret position
+      // Show typing animation near the text input area.
+      // Use mouse position as primary source — it's the most reliable because the
+      // user just clicked the input field, so the cursor is right at the field.
+      // Accessibility focused-position is unreliable for Chrome/web content
+      // (reports container position rather than actual caret position).
       try {
         let animX = 0, animY = 0;
         let hasPosition = false;
 
-        const focusPos = await execSwift('accessibility', 'focused-position');
-        if (focusPos?.success) {
-          const fp = focusPos as any;
-          // Validate non-zero — accessibilityFocusedPosition returns (0,0) when
-          // the caret query fails (CGRect.zero), so we must check explicitly
-          if (typeof fp.x === 'number' && typeof fp.y === 'number' && (fp.x > 5 || fp.y > 5)) {
-            animX = fp.x;
-            animY = fp.y;
-            hasPosition = true;
-          }
+        // Primary: mouse position (user just clicked the input field)
+        const pos = await execSwift('mouse', 'position');
+        if (pos?.success && typeof (pos as any).x === 'number') {
+          animX = (pos as any).x;
+          animY = (pos as any).y;
+          hasPosition = true;
         }
 
+        // Fallback: accessibility focused element center
         if (!hasPosition) {
-          // Fallback to mouse position
-          const pos = await execSwift('mouse', 'position');
-          if (pos?.success && typeof (pos as any).x === 'number') {
-            animX = (pos as any).x;
-            animY = (pos as any).y;
-            hasPosition = true;
+          const focusPos = await execSwift('accessibility', 'focused-position');
+          if (focusPos?.success) {
+            const fp = focusPos as any;
+            if (typeof fp.x === 'number' && typeof fp.y === 'number' && (fp.x > 5 || fp.y > 5)) {
+              animX = fp.x;
+              animY = fp.y;
+              hasPosition = true;
+            }
           }
         }
 
@@ -67,27 +70,27 @@ export const keyboardTools = {
       keys: z.string().describe('Hotkey combination with "+" separator (e.g., "cmd+c", "cmd+shift+z")'),
     }),
     handler: async (args: { keys: string }) => {
-      // Show hotkey animation at focused element or fallback to mouse
+      // Show hotkey animation at mouse position (most reliable)
       try {
         let animX = 0, animY = 0;
         let hasPosition = false;
 
-        const focusPos = await execSwift('accessibility', 'focused-position');
-        if (focusPos?.success) {
-          const fp = focusPos as any;
-          if (typeof fp.x === 'number' && typeof fp.y === 'number' && (fp.x > 5 || fp.y > 5)) {
-            animX = fp.x;
-            animY = fp.y;
-            hasPosition = true;
-          }
+        const pos = await execSwift('mouse', 'position');
+        if (pos?.success && typeof (pos as any).x === 'number') {
+          animX = (pos as any).x;
+          animY = (pos as any).y;
+          hasPosition = true;
         }
 
         if (!hasPosition) {
-          const pos = await execSwift('mouse', 'position');
-          if (pos?.success && typeof (pos as any).x === 'number') {
-            animX = (pos as any).x;
-            animY = (pos as any).y;
-            hasPosition = true;
+          const focusPos = await execSwift('accessibility', 'focused-position');
+          if (focusPos?.success) {
+            const fp = focusPos as any;
+            if (typeof fp.x === 'number' && typeof fp.y === 'number' && (fp.x > 5 || fp.y > 5)) {
+              animX = fp.x;
+              animY = fp.y;
+              hasPosition = true;
+            }
           }
         }
 

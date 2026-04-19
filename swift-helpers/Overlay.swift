@@ -78,22 +78,37 @@ func parseHexColor(_ hex: String?, defaultColor: NSColor = NSColor.systemBlue) -
 
 class OverlayWindow: NSWindow {
     init() {
-        let screen = NSScreen.main ?? NSScreen.screens[0]
+        // Use CGDisplayBounds for the primary display to get exact CG coordinate space.
+        // This ensures the overlay window covers the full screen in CG coordinates,
+        // which is the same coordinate system used by CGEvent, Accessibility API,
+        // and the coordinates we receive from the bridge.
+        let cgBounds = CGDisplayBounds(CGMainDisplayID())
+        // CGDisplayBounds for primary display: {0, 0, width, height} (CG top-left origin)
+        // NSWindow contentRect uses AppKit coords (bottom-left origin)
+        // For primary display, both have origin (0,0) and same size — they're equivalent.
+        let screenFrame = NSRect(
+            x: cgBounds.origin.x,
+            y: 0,
+            width: cgBounds.width,
+            height: cgBounds.height
+        )
+
         super.init(
-            contentRect: screen.frame,
+            contentRect: screenFrame,
             styleMask: .borderless,
             backing: .buffered,
             defer: false
         )
 
-        self.level = .statusBar + 1
+        self.level = .screenSaver  // Above everything including menu bar / notch
         self.isOpaque = false
         self.backgroundColor = .clear
         self.ignoresMouseEvents = true
-        self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         self.hasShadow = false
 
-        let view = OverlayView(frame: screen.frame)
+        let viewFrame = NSRect(x: 0, y: 0, width: cgBounds.width, height: cgBounds.height)
+        let view = OverlayView(frame: viewFrame)
         self.contentView = view
     }
 }
@@ -569,6 +584,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func handleCommand(_ cmd: Command) {
         guard let view = overlayWindow.contentView as? OverlayView else { return }
+
+        // Ensure overlay still covers the full screen (handles resolution changes)
+        let cgBounds = CGDisplayBounds(CGMainDisplayID())
+        let expectedFrame = NSRect(x: cgBounds.origin.x, y: 0, width: cgBounds.width, height: cgBounds.height)
+        if overlayWindow.frame != expectedFrame {
+            overlayWindow.setFrame(expectedFrame, display: true)
+        }
 
         switch cmd.action {
         case "click":
